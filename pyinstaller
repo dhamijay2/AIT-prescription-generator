@@ -1,0 +1,1 @@
+& "C:/Users/Yashu/OneDrive - University of Cincinnati/python/.venv/Scripts/pyinstaller.exe" --onefile --windowed --icon="C:\Users\Yashu\OneDrive - University of Cincinnati\python\ait-generator.ico" --name "UC Immunotherapy" "ait gen.py"
