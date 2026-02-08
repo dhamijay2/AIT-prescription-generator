@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Allergy Test Result Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .allergen-category {
+            @apply bg-white p-4 rounded-lg shadow-sm border border-gray-100;
+        }
+        .category-title {
+            @apply font-bold text-blue-800 flex justify-between items-center border-b pb-1 text-sm uppercase tracking-wider mb-2;
+        }
+        .group-btn {
+            @apply text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded border border-blue-200 hover:bg-blue-100 transition-colors normal-case font-medium;
+        }
+        .checkbox-item {
+            @apply flex items-center space-x-2 py-1 cursor-pointer hover:bg-gray-50 rounded px-1 transition-colors w-fit;
+        }
+        .output-box {
+            @apply bg-gray-50 p-4 rounded-lg border border-gray-200 font-sans text-gray-800 relative;
+        }
+        .copy-btn {
+            @apply absolute top-2 right-2 bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700 transition-colors flex items-center gap-1;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 md:p-8">
+    <div class="max-w-6xl mx-auto">
+        <header class="mb-8 text-center">
+            <h1 class="text-3xl font-bold text-gray-900">Allergy Result Generator</h1>
+            <p class="text-gray-600">Select positive allergens to generate patient reports</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Allergen Selection Area -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- Change to 2 columns max for items, categories stacked vertically -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="categories-container">
+                    <!-- Dynamic categories will be injected here -->
+                </div>
+                
+                <div class="flex gap-4">
+                    <button onclick="selectAll()" class="bg-blue-600 text-white px-6 py-2 rounded shadow hover:bg-blue-700 transition-colors">
+                        Check All
+                    </button>
+                    <button onclick="resetSelections()" class="bg-gray-500 text-white px-6 py-2 rounded shadow hover:bg-gray-600 transition-colors">
+                        Clear All
+                    </button>
+                </div>
+            </div>
+
+            <!-- Result Area -->
+            <div class="space-y-6">
+                <div class="sticky top-8">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-800">Generated Reports</h2>
+                    
+                    <!-- Sentence Result -->
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Sentence Result:</label>
+                        <div class="output-box" id="sentence-container">
+                            <button onclick="copyToClipboard('sentence-text')" class="copy-btn" id="copy-sentence-btn">
+                                Copy
+                            </button>
+                            <div id="sentence-text" class="pr-12 min-h-[3rem]">No allergens selected.</div>
+                        </div>
+                    </div>
+
+                    <!-- Formal Result -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Formal Result:</label>
+                        <div class="output-box" id="formal-container">
+                            <button onclick="copyToClipboard('formal-text')" class="copy-btn" id="copy-formal-btn">
+                                Copy
+                            </button>
+                            <div id="formal-text" class="pr-12 whitespace-pre-wrap min-h-[8rem]">No allergens selected.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const allergenData = [
+            {
+                category: "Molds",
+                items: [
+                    { name: "Alternaria" },
+                    { name: "Aspergillus" },
+                    { name: "Cladosporium" },
+                    { name: "Penicillium" }
+                ]
+            },
+            {
+                category: "Tree Pollens",
+                items: [
+                    { name: "Ash", cross: "Olive - found in Europe" },
+                    { name: "Birch/Oak", cross: "Alder, Hazelnut, Hornbeam, Beech, Chestnut" },
+                    { name: "Cedar", cross: "Juniper, Cypress, Arborvitae" },
+                    { name: "Hackberry", cross: "Elm" },
+                    { name: "Maple", cross: "Box Elder" },
+                    { name: "Sycamore" },
+                    { name: "Walnut", cross: "Pecan, Hickory" },
+                    { name: "Willow", cross: "Cottonwood, Poplar, Aspen" },
+                    { name: "Mulberry" }
+                ]
+            },
+            {
+                category: "Grass Pollens",
+                items: [
+                    { name: "Bermuda" },
+                    { name: "Johnson", cross: "Corn, Bahia, sugarcane" },
+                    { name: "Timothy Grass", cross: "Orchard, Rye, Kentucky Blue, Fescue" }
+                ]
+            },
+            {
+                category: "Weed Pollens",
+                items: [
+                    { name: "Cocklebur" },
+                    { name: "Yellow Dock", cross: "Sheep Sorrel" },
+                    { name: "Firebush/Kochia", cross: "Burning Bush" },
+                    { name: "Lamb's Quarter" },
+                    { name: "Mugwort", cross: "Sage, Wormwood" },
+                    { name: "Pigweed" },
+                    { name: "English Plantain" },
+                    { name: "Russian Thistle" },
+                    { name: "Ragweed" }
+                ]
+            },
+            {
+                category: "Year-round Allergens",
+                items: [
+                    { name: "Cat" },
+                    { name: "Dog" },
+                    { name: "Mouse" },
+                    { name: "Rat" },
+                    { name: "Horse" },
+                    { name: "Cockroach" },
+                    { name: "Dust Mite" }
+                ]
+            }
+        ];
+
+        // Initialize UI
+        const container = document.getElementById('categories-container');
+        allergenData.forEach((cat, index) => {
+            const div = document.createElement('div');
+            div.className = 'allergen-category';
+            
+            const catId = `cat-${index}`;
+            let itemsHtml = `
+                <div class="category-title">
+                    <span>${cat.category}</span>
+                    <div class="flex gap-2">
+                        <button onclick="toggleGroup('${cat.category}', true)" class="group-btn">Select All</button>
+                        <button onclick="toggleGroup('${cat.category}', false)" class="group-btn !bg-gray-50 !text-gray-500 !border-gray-200 hover:!bg-gray-100">Clear</button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 gap-x-4">`; // Single vertical line for items
+            
+            cat.items.forEach(itemObj => {
+                const item = itemObj.name;
+                itemsHtml += `
+                    <label class="checkbox-item">
+                        <input type="checkbox" name="allergen" value="${item}" data-category="${cat.category}" 
+                               onchange="updateResults()" class="rounded text-blue-600">
+                        <span class="text-gray-700 text-sm whitespace-nowrap">${item}</span>
+                    </label>
+                `;
+            });
+            itemsHtml += `</div>`;
+            div.innerHTML = itemsHtml;
+            container.appendChild(div);
+        });
+
+        function updateResults() {
+            const selected = Array.from(document.querySelectorAll('input[name="allergen"]:checked'));
+            const sentenceEl = document.getElementById('sentence-text');
+            const formalEl = document.getElementById('formal-text');
+
+            if (selected.length === 0) {
+                sentenceEl.innerText = "No allergens selected.";
+                formalEl.innerHTML = "No allergens selected.";
+                return;
+            }
+
+            const names = selected.map(cb => cb.value);
+            
+            // 1. Sentence Logic
+            let sentence = "The patient is allergic to ";
+            if (names.length === 1) {
+                sentence += names[0] + ".";
+            } else if (names.length === 2) {
+                sentence += names[0] + " and " + names[1] + ".";
+            } else {
+                const last = names.pop();
+                sentence += names.join(", ") + ", and " + last + ".";
+                // restore names for next use
+                names.push(last);
+            }
+            sentenceEl.innerText = sentence;
+
+            // 2. Formal Logic
+            const grouped = {};
+            selected.forEach(cb => {
+                const cat = cb.getAttribute('data-category');
+                if (!grouped[cat]) grouped[cat] = [];
+                grouped[cat].push(cb.value);
+            });
+
+            let formalHtml = "";
+            if (selected.length > 0) {
+                formalHtml += `<div class="mb-4 text-sm font-medium border-b pb-2">The tested allergens are listed below, with cross-reactive allergens included in parentheses.</div>`;
+            }
+            
+            allergenData.forEach(cat => {
+                if (grouped[cat.category]) {
+                    const itemStrings = grouped[cat.category].map(selectedName => {
+                        const itemData = cat.items.find(i => i.name === selectedName);
+                        if (itemData && itemData.cross) {
+                            return `${selectedName} (${itemData.cross})`;
+                        }
+                        return selectedName;
+                    });
+                    formalHtml += `<div class="mb-3"><strong>${cat.category.toUpperCase()}</strong>:<br>${itemStrings.join("<br>")}</div>`;
+                }
+            });
+            
+            if (formalHtml) {
+                formalHtml += `<div class="mt-4 text-[11px] text-gray-500 border-t pt-2 italic">Note: Allergens listed in parentheses represent cross-reactive species that may cause symptoms despite not being individually tested.</div>`;
+            }
+            
+            formalEl.innerHTML = formalHtml;
+        }
+
+        function resetSelections() {
+            document.querySelectorAll('input[name="allergen"]').forEach(cb => cb.checked = false);
+            updateResults();
+        }
+
+        function selectAll() {
+            document.querySelectorAll('input[name="allergen"]').forEach(cb => cb.checked = true);
+            updateResults();
+        }
+
+        function toggleGroup(category, state) {
+            document.querySelectorAll(`input[data-category="${category}"]`).forEach(cb => cb.checked = state);
+            updateResults();
+        }
+
+        async function copyToClipboard(elementId) {
+            const text = document.getElementById(elementId).innerText;
+            const btn = document.querySelector(`#copy-${elementId.split('-')[0]}-btn`);
+            
+            try {
+                await navigator.clipboard.writeText(text);
+                const originalText = btn.innerHTML;
+                btn.innerHTML = "Copied!";
+                btn.classList.replace('bg-blue-600', 'bg-green-600');
+                
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.classList.replace('bg-green-600', 'bg-blue-600');
+                }, 2000);
+            } catch (err) {
+                console.error('Failed to copy: ', err);
+                alert("Could not copy to clipboard. Please select and copy manually.");
+            }
+        }
+    </script>
+</body>
+</html>
