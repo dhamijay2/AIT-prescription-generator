@@ -287,6 +287,8 @@ prescriber_var = None  # Will be initialized in UI setup
 mix_preparer_var = None  # Will be initialized in UI setup
 last_compounding_log_id = None  # Will store the compounding log ID for PDF export
 last_save_directory = CURRENT_CONFIG.get("last_save_directory", WORKING_DIR)  # Remember the last save directory for file dialogs
+prescription_generated = False  # Track if current displayed prescription matches current selections
+preserve_manual_edits_var = None  # Will be initialized in UI setup
 
 # --- Avery 45160 Label Specifications ---
 # Avery 45160 Address Labels: 30 labels per sheet (6 rows × 5 columns)
@@ -1439,6 +1441,7 @@ def generate_vials(selected_allergens, max_vials=3):
 
 def generate_prescription():
     """Generates the prescription text with vial compositions."""
+    global prescription_generated, last_prescription_data, last_vials
     mode = vial_type_var.get()
     treatment_type = treatment_type_var.get()
     prescriber_name = prescriber_var.get() if prescriber_var else ""
@@ -1484,23 +1487,30 @@ def generate_prescription():
     else:
         result_label.config(text="Invalid vial type selected.")
         return
-    
+
     # Convert to comma-separated string for saving
     selected_allergens_str = ", ".join(selected_allergens)
 
     if not selected_allergens:
         result_label.config(text="Error: No allergens selected.")
         return
-    
+
     # Check for mutually exclusive allergens
     if "Dog - Epithelium" in selected_allergens and "Dog - UF" in selected_allergens:
         result_label.config(text="Error: Cannot select both 'Dog - Epithelium' and 'Dog - UF'.\nPlease select only one dog extract.")
         return
-    
-    # Generate vials with proper distribution
+
+    # If preserve manual edits is enabled and we already have a prescription, just refresh display
+    if preserve_manual_edits_var and preserve_manual_edits_var.get() and prescription_generated and last_vials:
+        result_label.config(text="", fg=TEXT_COLOR)
+        display_prescription_output(last_vials, last_prescription_data, mode)
+        show_toast("Prescription refreshed (manual edits preserved)")
+        return
+
+    # Generate vials with proper distribution (algorithm mode)
     max_vials = 4 if allow_fourth_vial_var and allow_fourth_vial_var.get() else 3
     vials = generate_vials(selected_allergens, max_vials=max_vials)
-    
+
     if not vials:
         result_label.config(text="Error: Could not distribute allergens into vials.\nCheck allergen compatibility.")
         return
@@ -1508,7 +1518,7 @@ def generate_prescription():
     # Serialize the prescription for storage
     prescription_json = serialize_vials_to_json(vials, mode, treatment_type)
     save_patient_data(patient_data, selected_allergens_str, prescription_json)
-    
+
     # Get patient ID for compounding log
     try:
         conn = sqlite3.connect(DB_FILE)
@@ -1519,9 +1529,8 @@ def generate_prescription():
         conn.close()
     except:
         patient_id = None
-    
+
     # Store prescription data globally for PDF export
-    global last_prescription_data, last_vials
     last_prescription_data = {
         'patient_name': patient_name,
         'dob': dob.strftime('%m-%d-%Y'),
@@ -1539,9 +1548,12 @@ def generate_prescription():
 
     # Create compounding log using current vial contents
     create_compounding_log(patient_id, patient_name, dob.strftime('%m-%d-%Y'), mode, treatment_type, vials)
-    
+
     # Display the prescription
     display_prescription_output(last_vials, last_prescription_data, mode)
+
+    # Mark prescription as generated
+    prescription_generated = True
 
 
 def display_prescription_output(vials, prescription_data, vial_type):
@@ -3104,8 +3116,19 @@ def update_allergen_options(*args):
             widget.grid_remove()
 
 
+def on_selection_changed(*args):
+    """Called when any allergen or treatment option changes. Marks prescription as stale."""
+    global prescription_generated
+    if prescription_generated:
+        prescription_generated = False
+        # Only update display if result_label exists (during UI operation)
+        if 'result_label' in globals():
+            result_label.config(text="⚠️ PRESCRIPTION OUTDATED\n\nAllergen selections have changed. Click Generate to create an updated prescription.", fg="#d97706")
+
+
 def clear_fields():
     """Clears all input fields and checkbox selections."""
+    global prescription_generated
     patient_name_entry.delete(0, tk.END)
     dob_entry.set_date(datetime.date.today())
     mrn_entry.delete(0, tk.END)
@@ -3123,7 +3146,8 @@ def clear_fields():
     treatment_type_var.set("New Start")
     if allow_fourth_vial_var:
         allow_fourth_vial_var.set(False)
-    result_label.config(text="")  # Clear result label
+    result_label.config(text="", fg=TEXT_COLOR)  # Clear result label
+    prescription_generated = False
 
 
 # --- Main Application Window ---
@@ -3315,6 +3339,7 @@ vial_type_label.pack(side=tk.LEFT, padx=5)
 
 vial_type_var = tk.StringVar(value="Environmental")
 vial_type_var.trace_add("write", update_allergen_options)
+vial_type_var.trace_add("write", on_selection_changed)
 
 vial_type_combo = ttk.Combobox(controls_frame, textvariable=vial_type_var,
                                values=["Environmental", "Venom"], state='readonly', width=20)
@@ -3325,13 +3350,19 @@ treatment_label = ttk.Label(controls_frame, text="Treatment Type:", style='Subhe
 treatment_label.pack(side=tk.LEFT, padx=(15, 5))
 
 treatment_type_var = tk.StringVar(value="New Start")
+treatment_type_var.trace_add("write", on_selection_changed)
 treatment_combo = ttk.Combobox(controls_frame, textvariable=treatment_type_var,
                                values=["New Start", "Maintenance"], state='readonly', width=20)
 treatment_combo.pack(side=tk.LEFT, padx=5)
 
 allow_fourth_vial_var = tk.BooleanVar(value=False)
+allow_fourth_vial_var.trace_add("write", on_selection_changed)
 fourth_vial_check = ttk.Checkbutton(controls_frame, text="4th Vial?", variable=allow_fourth_vial_var)
 fourth_vial_check.pack(side=tk.LEFT, padx=(10, 5))
+
+preserve_manual_edits_var = tk.BooleanVar(value=False)
+preserve_edits_check = ttk.Checkbutton(controls_frame, text="🔒 Preserve Edits", variable=preserve_manual_edits_var)
+preserve_edits_check.pack(side=tk.LEFT, padx=(10, 5))
 
 # --- Prescriber / Prepared By / Load Patient ---
 prescriber_frame = ttk.Frame(form_frame)
@@ -3378,6 +3409,7 @@ mold_allergens = ["Aspergillus", "Alternaria", "Cladosporium", "Penicillium"]
 for i, allergen in enumerate(mold_allergens):
     var = tk.BooleanVar()
     environmental_allergen_vars[allergen] = var
+    var.trace_add("write", on_selection_changed)
     checkbox = ttk.Checkbutton(mold_frame, text=allergen, variable=var)
     checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
 
@@ -3390,6 +3422,7 @@ tree_allergens = ["Ash", "Birch (Oak)", "Cedar", "Elm", "Hackberry (Elm)", "Mapl
 for i, allergen in enumerate(tree_allergens):
     var = tk.BooleanVar()
     environmental_allergen_vars[allergen] = var
+    var.trace_add("write", on_selection_changed)
     checkbox = ttk.Checkbutton(tree_frame, text=allergen, variable=var)
     checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
 
@@ -3401,6 +3434,7 @@ grass_allergens = ["Timothy", "Johnson", "Bermuda"]
 for i, allergen in enumerate(grass_allergens):
     var = tk.BooleanVar()
     environmental_allergen_vars[allergen] = var
+    var.trace_add("write", on_selection_changed)
     checkbox = ttk.Checkbutton(grass_frame, text=allergen, variable=var)
     checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
 
@@ -3413,6 +3447,7 @@ weed_allergens = ["Cocklebur", "Yellow Dock (Sheep Sorrel)", "Kochia (Firebush)"
 for i, allergen in enumerate(weed_allergens):
     var = tk.BooleanVar()
     environmental_allergen_vars[allergen] = var
+    var.trace_add("write", on_selection_changed)
     checkbox = ttk.Checkbutton(weed_frame, text=allergen, variable=var)
     checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
 
@@ -3425,6 +3460,7 @@ other_allergens = ["Cat", "Dog - UF", "Dog - Epithelium", "Mouse", "Rat", "Horse
 for i, allergen in enumerate(other_allergens):
     var = tk.BooleanVar()
     environmental_allergen_vars[allergen] = var
+    var.trace_add("write", on_selection_changed)
     checkbox = ttk.Checkbutton(other_frame, text=allergen, variable=var)
     checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
 
@@ -3443,6 +3479,7 @@ venom_allergen_checkboxes = []
 for i, allergen in enumerate(venom_allergens):
     var = tk.BooleanVar()
     venom_allergen_vars[allergen] = var
+    var.trace_add("write", on_selection_changed)
     checkbox = ttk.Checkbutton(venom_allergen_frame, text=allergen, variable=var)
     checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
     venom_allergen_checkboxes.append(checkbox)

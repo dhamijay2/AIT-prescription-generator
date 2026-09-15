@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['C:\\Users\\Yashu\\OneDrive - University of Cincinnati\\python\\ait-generator.ico'],
+    icon=['ait-generator.ico'],
 )
