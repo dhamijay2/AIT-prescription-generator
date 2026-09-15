@@ -36,6 +36,20 @@ def setup_working_directory():
 # Call this at startup
 WORKING_DIR = setup_working_directory()
 
+# --- Version Management ---
+def get_app_version():
+    """Load version from VERSION file."""
+    try:
+        version_file = os.path.join(WORKING_DIR, "VERSION")
+        if os.path.exists(version_file):
+            with open(version_file, 'r') as f:
+                return f.read().strip()
+    except Exception as e:
+        print(f"Warning: Could not load version: {e}")
+    return "1.0"
+
+APP_VERSION = get_app_version()
+
 # --- Config File Management ---
 def get_config_path():
     """Get the path to the user's config file in Documents (cross-platform)."""
@@ -166,22 +180,42 @@ DB_FILE = CURRENT_CONFIG.get("database_path", os.path.join(WORKING_DIR, "UC_Alle
 def handle_first_launch():
     """Check if database path is valid; if not, prompt user to select/create one."""
     global DB_FILE, CURRENT_CONFIG
-    
+
     db_path = CURRENT_CONFIG.get("database_path")
-    
+
     # Check if the database path is valid (parent directory exists and path is set)
     if not db_path or not os.path.exists(os.path.dirname(db_path)):
         # Need user input - create a minimal window for the dialog
         temp_root = tk.Tk()
         temp_root.withdraw()  # Hide the temporary window
-        
-        # Ask user if they want to select existing database or create new one
-        result = messagebox.askyesno(
-            "Database Setup",
-            "Would you like to select an existing database?\n\nYes: Select existing database\nNo: Create new database"
-        )
-        
-        if result:  # User wants to select existing
+
+        # Create custom dialog with clear button labels
+        choice_window = tk.Toplevel(temp_root)
+        choice_window.title("Database Setup")
+        choice_window.geometry("400x150")
+        choice_window.resizable(False, False)
+
+        ttk.Label(choice_window, text="Select an option:", font=('Segoe UI', 11, 'bold')).pack(pady=15)
+
+        result = {"value": None}
+
+        def select_existing():
+            result["value"] = True
+            choice_window.destroy()
+
+        def create_new():
+            result["value"] = False
+            choice_window.destroy()
+
+        button_frame = ttk.Frame(choice_window)
+        button_frame.pack(pady=10)
+
+        ttk.Button(button_frame, text="📂 Select Existing Database", command=select_existing, width=25).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="➕ Create New Database", command=create_new, width=25).pack(side=tk.LEFT, padx=5)
+
+        choice_window.wait_window()
+
+        if result["value"] is True:  # User wants to select existing
             db_file = filedialog.askopenfilename(
                 title="Select Database File",
                 filetypes=[("Database files", "*.db"), ("All files", "*.*")],
@@ -191,7 +225,7 @@ def handle_first_launch():
                 DB_FILE = db_file
                 CURRENT_CONFIG['database_path'] = db_file
                 save_config(CURRENT_CONFIG)
-        else:  # User wants to create new
+        elif result["value"] is False:  # User wants to create new
             db_file = filedialog.asksaveasfilename(
                 title="Create New Database",
                 defaultextension=".db",
@@ -203,7 +237,7 @@ def handle_first_launch():
                 DB_FILE = db_file
                 CURRENT_CONFIG['database_path'] = db_file
                 save_config(CURRENT_CONFIG)
-        
+
         temp_root.destroy()
 
 # --- Allergen Data ---
@@ -391,7 +425,28 @@ def init_database():
                 FOREIGN KEY(stock_extract_id) REFERENCES stock_extracts(id)
             )
         ''')
-        
+
+        # Create staff_members table for managing prescribers and preparers
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS staff_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                role TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Insert default staff members if they don't exist
+        try:
+            cursor.execute("INSERT OR IGNORE INTO staff_members (name, role) VALUES (?, ?)",
+                          ("Yashu Dhamija MD", "Prescriber"))
+            cursor.execute("INSERT OR IGNORE INTO staff_members (name, role) VALUES (?, ?)",
+                          ("Joshua Bernstein MD", "Prescriber"))
+            cursor.execute("INSERT OR IGNORE INTO staff_members (name, role) VALUES (?, ?)",
+                          ("Elaine Sturtevant RN", "Preparer"))
+        except Exception:
+            pass
+
         conn.commit()
         conn.close()
     except Exception as e:
@@ -655,10 +710,37 @@ def open_settings():
     
     def browse_databases():
         """Browse for existing database or location for new one."""
-        result = messagebox.askyesno("Database Selection", 
-            "Do you want to:\n\nYes = Select existing database\nNo = Choose location for new database")
-        
-        if result:
+        # Create custom dialog with clear button labels
+        choice_window = tk.Toplevel(root)
+        choice_window.title("Database Selection")
+        choice_window.geometry("400x150")
+        choice_window.resizable(False, False)
+
+        # Center the window
+        choice_window.transient(root)
+        choice_window.grab_set()
+
+        ttk.Label(choice_window, text="Select an option:", font=('Segoe UI', 11, 'bold')).pack(pady=15)
+
+        result = {"value": None}
+
+        def select_existing():
+            result["value"] = True
+            choice_window.destroy()
+
+        def create_new():
+            result["value"] = False
+            choice_window.destroy()
+
+        button_frame = ttk.Frame(choice_window)
+        button_frame.pack(pady=10)
+
+        ttk.Button(button_frame, text="📂 Select Existing Database", command=select_existing, width=25).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="➕ Create New Database", command=create_new, width=25).pack(side=tk.LEFT, padx=5)
+
+        choice_window.wait_window()
+
+        if result["value"] is True:
             # Select existing database
             file_path = filedialog.askopenfilename(
                 title="Select AIT Database",
@@ -667,7 +749,7 @@ def open_settings():
             )
             if file_path:
                 db_path_var.set(file_path)
-        else:
+        elif result["value"] is False:
             # Choose location for new database
             file_path = filedialog.asksaveasfilename(
                 title="Create New Database",
@@ -2766,7 +2848,7 @@ def show_stock_edit_dialog(stock_id=None, parent_window=None):
                 # Refresh parent window if provided
                 if parent_window:
                     parent_window.destroy()
-                    show_stock_management()
+                    show_inventory_and_staff()
             
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save entry: {e}")
@@ -2776,25 +2858,151 @@ def show_stock_edit_dialog(stock_id=None, parent_window=None):
         
         cancel_btn = ttk.Button(button_frame, text="Cancel", command=edit_window.destroy)
         cancel_btn.pack(side=tk.LEFT, padx=5)
-    
+
     except Exception as e:
         messagebox.showerror("Error", f"Failed to open edit dialog: {e}")
 
 
-def show_stock_management():
-    """Open stock management window to view and edit stock extracts."""
+def get_staff_members():
+    """Get list of staff members from database."""
     try:
-        stock_window = tk.Toplevel(root)
-        stock_window.title("Stock Inventory Management")
-        stock_window.geometry("1200x600")
-        
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM staff_members ORDER BY name")
+        rows = cursor.fetchall()
+        conn.close()
+        return [row['name'] for row in rows]
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to load staff members: {e}")
+        return []
+
+
+def refresh_staff_dropdowns():
+    """Update prescriber and preparer dropdowns with current staff members."""
+    global prescriber_combo, mix_preparer_combo
+    staff = get_staff_members()
+    if prescriber_combo:
+        prescriber_combo['values'] = staff
+    if mix_preparer_combo:
+        mix_preparer_combo['values'] = staff
+
+
+def show_staff_edit_dialog(staff_id=None, parent_window=None):
+    """Show dialog to add or edit a staff member."""
+    try:
+        edit_window = tk.Toplevel(root)
+        edit_window.title("Add Staff Member" if staff_id is None else "Edit Staff Member")
+        edit_window.geometry("400x200")
+
+        # Get current data if editing
+        current_data = {}
+        if staff_id:
+            conn = sqlite3.connect(DB_FILE)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM staff_members WHERE id = ?", (staff_id,))
+            result = cursor.fetchone()
+            conn.close()
+            if result:
+                current_data = dict(result)
+
+        # Create form fields
+        form_frame = ttk.Frame(edit_window, padding=20)
+        form_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(form_frame, text="Staff Name:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", pady=10)
+        name_var = tk.StringVar(value=current_data.get('name', ''))
+        name_entry = ttk.Entry(form_frame, textvariable=name_var, width=40)
+        name_entry.grid(row=0, column=1, sticky="ew", pady=10)
+
+        ttk.Label(form_frame, text="Role:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky="w", pady=10)
+        role_var = tk.StringVar(value=current_data.get('role', ''))
+        role_combo = ttk.Combobox(form_frame, textvariable=role_var,
+                                  values=["Prescriber", "Preparer", "Both"], state='readonly', width=38)
+        role_combo.grid(row=1, column=1, sticky="ew", pady=10)
+
+        form_frame.columnconfigure(1, weight=1)
+
+        # Button frame
+        button_frame = ttk.Frame(edit_window)
+        button_frame.pack(fill=tk.X, padx=20, pady=20)
+
+        def save_entry():
+            name = name_var.get().strip()
+            role = role_var.get().strip()
+
+            if not name:
+                messagebox.showwarning("Validation", "Staff name is required.")
+                return
+
+            try:
+                conn = sqlite3.connect(DB_FILE)
+                cursor = conn.cursor()
+
+                if staff_id:
+                    cursor.execute('''
+                        UPDATE staff_members
+                        SET name = ?, role = ?
+                        WHERE id = ?
+                    ''', (name, role, staff_id))
+                    action_text = "updated"
+                else:
+                    cursor.execute('''
+                        INSERT INTO staff_members (name, role)
+                        VALUES (?, ?)
+                    ''', (name, role))
+                    action_text = "added"
+
+                conn.commit()
+                conn.close()
+
+                show_toast(f"Staff member {action_text}")
+                refresh_staff_dropdowns()
+                edit_window.destroy()
+
+                if parent_window:
+                    parent_window.destroy()
+                    show_inventory_and_staff()
+
+            except sqlite3.IntegrityError:
+                messagebox.showerror("Error", f"Staff member '{name}' already exists.")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save entry: {e}")
+
+        save_btn = ttk.Button(button_frame, text="💾 Save", command=save_entry)
+        save_btn.pack(side=tk.LEFT, padx=5)
+
+        cancel_btn = ttk.Button(button_frame, text="Cancel", command=edit_window.destroy)
+        cancel_btn.pack(side=tk.LEFT, padx=5)
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to open edit dialog: {e}")
+
+
+
+def show_inventory_and_staff():
+    """Open Inventory & Staff window with tabbed interface."""
+    try:
+        main_window = tk.Toplevel(root)
+        main_window.title("Inventory & Staff Management")
+        main_window.geometry("1200x650")
+
+        # Create notebook (tabbed interface)
+        notebook = ttk.Notebook(main_window)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # ===== TAB 1: INVENTORY =====
+        inventory_tab = ttk.Frame(notebook)
+        notebook.add(inventory_tab, text="📦 Inventory")
+
         def fetch_stocks(filter_allergen=None):
             conn = sqlite3.connect(DB_FILE)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             if filter_allergen and filter_allergen != "All":
                 cursor.execute('''
-                    SELECT id, allergen_name, concentration, manufacturer_item, lot_number, 
+                    SELECT id, allergen_name, concentration, manufacturer_item, lot_number,
                            expiration_date, vial_amount, is_active
                     FROM stock_extracts
                     WHERE allergen_name = ?
@@ -2802,7 +3010,7 @@ def show_stock_management():
                 ''', (filter_allergen,))
             else:
                 cursor.execute('''
-                    SELECT id, allergen_name, concentration, manufacturer_item, lot_number, 
+                    SELECT id, allergen_name, concentration, manufacturer_item, lot_number,
                            expiration_date, vial_amount, is_active
                     FROM stock_extracts
                     ORDER BY allergen_name, is_active DESC, expiration_date ASC
@@ -2818,9 +3026,9 @@ def show_stock_management():
             names = [row[0] for row in cursor.fetchall()]
             conn.close()
             return ["All"] + names
-        
+
         # Filter controls
-        filter_frame = ttk.Frame(stock_window)
+        filter_frame = ttk.Frame(inventory_tab)
         filter_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
 
         ttk.Label(filter_frame, text="Filter by Allergen:").pack(side=tk.LEFT)
@@ -2830,17 +3038,16 @@ def show_stock_management():
         allergen_filter_combo.pack(side=tk.LEFT, padx=6)
 
         # Create treeview
-        frame = ttk.Frame(stock_window)
+        frame = ttk.Frame(inventory_tab)
         frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
+
         columns = ("ID", "Allergen", "Concentration", "Manuf. Item", "Lot", "Expiration", "Vial Amt", "Active")
         tree = ttk.Treeview(frame, columns=columns, height=20, selectmode='extended')
-        
-        # Configure columns
+
         tree.column("#0", width=0, stretch=tk.NO)
-        col_widths = {"ID": 30, "Allergen": 120, "Concentration": 100, "Manuf. Item": 100, 
+        col_widths = {"ID": 30, "Allergen": 120, "Concentration": 100, "Manuf. Item": 100,
                      "Lot": 100, "Expiration": 100, "Vial Amt": 80, "Active": 50}
-        
+
         def parse_sort_value(col, value):
             if col == "ID":
                 try:
@@ -2904,13 +3111,13 @@ def show_stock_management():
         for col in columns:
             tree.column(col, width=col_widths.get(col, 100))
             tree.heading(col, text=col, command=lambda c=col: sort_by_column(c))
-        
+
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
+
         scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         tree.configure(yscroll=scrollbar.set)
-        
+
         tree.tag_configure('allergen_light', background='#ffffff')
         tree.tag_configure('allergen_dark', background='#f0f2f5')
         tree.tag_configure('expiring_soon', background='#fff3b0')
@@ -2958,7 +3165,7 @@ def show_stock_management():
                 if is_expiring_soon(expiration):
                     tags.append('expiring_soon')
                 tree.item(row_id, tags=tuple(tags))
-            stock_window.after(5000, refresh_expiring_highlights)
+            main_window.after(5000, refresh_expiring_highlights)
 
         def apply_filter(*args):
             populate_tree(allergen_filter_var.get())
@@ -2966,16 +3173,14 @@ def show_stock_management():
         allergen_filter_combo.bind("<<ComboboxSelected>>", apply_filter)
         populate_tree()
         refresh_expiring_highlights()
-        
-        # Add buttons
-        button_frame = ttk.Frame(stock_window)
+
+        # Add buttons for inventory tab
+        button_frame = ttk.Frame(inventory_tab)
         button_frame.pack(fill=tk.X, padx=10, pady=10)
-        
+
         def add_entry():
-            show_stock_edit_dialog(stock_id=None, parent_window=stock_window)
-        
-        def edit_entry():
-            selected = tree.selection()
+            show_stock_edit_dialog(stock_id=None, parent_window=main_window)
+
         def edit_entry(selected_item=None):
             if selected_item is None:
                 selected = tree.selection()
@@ -2986,7 +3191,7 @@ def show_stock_management():
 
             values = tree.item(selected_item)['values']
             stock_id = values[0]
-            show_stock_edit_dialog(stock_id=stock_id, parent_window=stock_window)
+            show_stock_edit_dialog(stock_id=stock_id, parent_window=main_window)
 
         def on_tree_double_click(event):
             selected_item = tree.focus()
@@ -2994,7 +3199,7 @@ def show_stock_management():
                 edit_entry(selected_item)
 
         tree.bind("<Double-1>", on_tree_double_click)
-        
+
         def delete_entry():
             selected = tree.selection()
             if not selected:
@@ -3015,12 +3220,12 @@ def show_stock_management():
                     conn.close()
 
                     show_toast(f"Deleted {len(entries)} item(s)")
-                    stock_window.destroy()
-                    show_stock_management()
+                    main_window.destroy()
+                    show_inventory_and_staff()
 
                 except Exception as e:
                     messagebox.showerror("Error", f"Failed to delete entry: {e}")
-        
+
         def set_active():
             selected = tree.selection()
             if not selected:
@@ -3052,33 +3257,120 @@ def show_stock_management():
                 conn.close()
 
                 show_toast(f"Set {len(entries)} item(s) as active")
-                stock_window.destroy()
-                show_stock_management()
+                main_window.destroy()
+                show_inventory_and_staff()
 
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to update stock: {e}")
-        
+
         add_btn = ttk.Button(button_frame, text="➕ Add Entry", command=add_entry)
         add_btn.pack(side=tk.LEFT, padx=5)
-        
+
         edit_btn = ttk.Button(button_frame, text="✏️ Edit", command=edit_entry)
         edit_btn.pack(side=tk.LEFT, padx=5)
-        
+
         delete_btn = ttk.Button(button_frame, text="🗑️ Delete", command=delete_entry)
         delete_btn.pack(side=tk.LEFT, padx=5)
-        
+
         separator = ttk.Separator(button_frame, orient=tk.VERTICAL)
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=0)
-        
+
         set_active_btn = ttk.Button(button_frame, text="⭐ Set as Active", command=set_active)
         set_active_btn.pack(side=tk.LEFT, padx=5)
-        
-        close_btn = ttk.Button(button_frame, text="Close", command=stock_window.destroy)
-        close_btn.pack(side=tk.LEFT, padx=5)
-    
+
+        # ===== TAB 2: STAFF MEMBERS =====
+        staff_tab = ttk.Frame(notebook)
+        notebook.add(staff_tab, text="👥 Staff Members")
+
+        # Staff members treeview
+        staff_frame = ttk.Frame(staff_tab)
+        staff_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        staff_columns = ("Name", "Role")
+        staff_tree = ttk.Treeview(staff_frame, columns=staff_columns, height=15, selectmode='extended')
+
+        staff_tree.column("#0", width=0, stretch=tk.NO)
+        staff_tree.column("Name", width=300)
+        staff_tree.column("Role", width=200)
+
+        staff_tree.heading("Name", text="Name")
+        staff_tree.heading("Role", text="Role")
+
+        staff_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        staff_scrollbar = ttk.Scrollbar(staff_frame, orient=tk.VERTICAL, command=staff_tree.yview)
+        staff_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        staff_tree.configure(yscroll=staff_scrollbar.set)
+
+        def populate_staff_tree():
+            for item in staff_tree.get_children():
+                staff_tree.delete(item)
+            try:
+                conn = sqlite3.connect(DB_FILE)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, name, role FROM staff_members ORDER BY name")
+                for row in cursor.fetchall():
+                    staff_tree.insert("", "end", iid=row['id'], values=(row['name'], row['role'] or ''))
+                conn.close()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load staff: {e}")
+
+        def add_staff():
+            show_staff_edit_dialog(staff_id=None, parent_window=main_window)
+
+        def edit_staff():
+            selected = staff_tree.selection()
+            if not selected:
+                messagebox.showwarning("Warning", "Please select a staff member to edit.")
+                return
+            staff_id = int(selected[0])
+            show_staff_edit_dialog(staff_id=staff_id, parent_window=main_window)
+
+        def delete_staff():
+            selected = staff_tree.selection()
+            if not selected:
+                messagebox.showwarning("Warning", "Please select a staff member to delete.")
+                return
+
+            if not messagebox.askyesno("Confirm Delete", f"Delete {len(selected)} staff member(s)?"):
+                return
+
+            try:
+                conn = sqlite3.connect(DB_FILE)
+                cursor = conn.cursor()
+                for staff_id in selected:
+                    cursor.execute("DELETE FROM staff_members WHERE id = ?", (int(staff_id),))
+                conn.commit()
+                conn.close()
+
+                show_toast(f"Deleted {len(selected)} staff member(s)")
+                refresh_staff_dropdowns()
+                populate_staff_tree()
+
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to delete staff: {e}")
+
+        def on_staff_double_click(event):
+            selected = staff_tree.selection()
+            if selected:
+                edit_staff()
+
+        staff_tree.bind("<Double-1>", on_staff_double_click)
+
+        # Staff buttons
+        staff_button_frame = ttk.Frame(staff_tab)
+        staff_button_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        ttk.Button(staff_button_frame, text="➕ Add Staff", command=add_staff).pack(side=tk.LEFT, padx=5)
+        ttk.Button(staff_button_frame, text="✏️ Edit", command=edit_staff).pack(side=tk.LEFT, padx=5)
+        ttk.Button(staff_button_frame, text="🗑️ Delete", command=delete_staff).pack(side=tk.LEFT, padx=5)
+
+        # Populate staff tree on load
+        populate_staff_tree()
 
     except Exception as e:
-        messagebox.showerror("Error", f"Failed to open stock management: {e}")
+        messagebox.showerror("Error", f"Failed to open Inventory & Staff: {e}")
 
 
 def import_stock_csv_dialog():
@@ -3158,7 +3450,7 @@ handle_first_launch()
 init_database()
 
 root = tk.Tk()
-root.title("Allergen Immunotherapy Prescription Generator by Yashu Dhamija MD 2026 version 1.0")
+root.title(f"Allergen Immunotherapy Prescription Generator by Yashu Dhamija MD 2026 version {APP_VERSION}")
 root.geometry("1800x900")
 
 # --- Create Menu Bar ---
@@ -3498,7 +3790,7 @@ generate_button.pack(side=tk.LEFT, padx=3, ipadx=10, ipady=5)
 clear_button = ttk.Button(button_frame1, text="⟲ Clear", command=clear_fields)
 clear_button.pack(side=tk.LEFT, padx=3, ipadx=10, ipady=5)
 
-stock_mgmt_button = ttk.Button(button_frame1, text="🏷️ Stock Management", command=show_stock_management)
+stock_mgmt_button = ttk.Button(button_frame1, text="⚙️ Inventory & Staff", command=show_inventory_and_staff)
 stock_mgmt_button.pack(side=tk.LEFT, padx=3, ipadx=10, ipady=5)
 
 edit_volumes_button = ttk.Button(button_frame1, text="✏️ Edit Volumes", command=edit_prescription_volumes)
