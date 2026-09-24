@@ -297,6 +297,20 @@ DEFAULT_ALLERGENS = [
 
 ALLERGENS = apply_allergen_overrides(DEFAULT_ALLERGENS, CURRENT_CONFIG)
 
+# Define allergen group order for display
+GROUP_ORDER = ["Mold", "Tree", "Grass", "Weed", "Other"]
+
+def sort_allergens_by_group(allergen_names):
+    """Sort allergen names by group priority (Mold, Tree, Grass, Weed, Other), then alphabetically within each group."""
+    allergen_map = {a["name"]: a["group"] for a in ALLERGENS}
+
+    def get_sort_key(allergen_name):
+        group = allergen_map.get(allergen_name, "Other")
+        group_priority = GROUP_ORDER.index(group) if group in GROUP_ORDER else len(GROUP_ORDER)
+        return (group_priority, allergen_name)
+
+    return sorted(allergen_names, key=get_sort_key)
+
 # Stock-only items (do not appear in main allergen selection UI)
 STOCK_ONLY_EXTRACTS = [
     "Normal Saline with Human Serum Albumin - Silver Top",
@@ -1029,24 +1043,44 @@ def open_dose_ranges_window():
         load_allergen_details(tree.item(first_item)["values"][0])
 
 
-def show_toast(message, duration=3000):
-    """Displays a toast notification in the bottom-right corner of the window."""
+def show_toast(message, duration=3000, link_text=None, link_action=None):
+    """Displays a toast notification in the bottom-right corner of the window.
+
+    Args:
+        message: The main message text
+        duration: How long to show (milliseconds)
+        link_text: Optional text for a clickable link
+        link_action: Optional callback function for when the link is clicked
+    """
     toast = tk.Toplevel(root)
     toast.wm_overrideredirect(True)
     toast.attributes('-topmost', True)
-    
+
     # Style the toast
     toast.configure(bg='#333333')
-    label = tk.Label(toast, text=message, bg='#333333', fg='white', 
-                    font=('Segoe UI', 9), padx=15, pady=10)
-    label.pack()
-    
+
+    # Create frame for content
+    content_frame = tk.Frame(toast, bg='#333333')
+    content_frame.pack(padx=15, pady=10)
+
+    # Main message label
+    label = tk.Label(content_frame, text=message, bg='#333333', fg='white',
+                    font=('Segoe UI', 9))
+    label.pack(anchor='w')
+
+    # Optional clickable link
+    if link_text and link_action:
+        link = tk.Label(content_frame, text=link_text, bg='#333333', fg='#4da6ff',
+                       font=('Segoe UI', 9, 'underline'), cursor='hand2')
+        link.pack(anchor='w', pady=(5, 0))
+        link.bind('<Button-1>', lambda e: link_action())
+
     # Get window dimensions to position in bottom-right
     toast.update_idletasks()
     x = root.winfo_x() + root.winfo_width() - toast.winfo_width() - 20
     y = root.winfo_y() + root.winfo_height() - toast.winfo_height() - 20
     toast.geometry(f"+{x}+{y}")
-    
+
     # Auto-close after duration
     toast.after(duration, toast.destroy)
 
@@ -1305,7 +1339,9 @@ def load_patient():
             messagebox.showwarning("Warning", "Please select a patient to delete.")
             return
 
-        if not messagebox.askyesno("Confirm Delete", f"Delete patient '{selected_patient_str}'?"):
+        # Enhanced confirmation with more details
+        if not messagebox.askyesno("Confirm Delete",
+            f"Are you sure you want to permanently delete this patient?\n\n{selected_patient_str}\n\nThis action cannot be undone."):
             return
 
         try:
@@ -1730,8 +1766,11 @@ def edit_prescription_volumes():
     for vial in last_vials:
         vial_frame = ttk.LabelFrame(scrollable_frame, text=f"{vial.label} (Current Total: {vial.current_volume:.2f} mL)")
         vial_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        for allergen_name in sorted(vial.allergens.keys()):
+
+        # Sort allergens by group priority before displaying
+        sorted_allergen_names = sort_allergens_by_group([name for name in vial.allergens.keys() if name != "HSA Diluent"])
+
+        for allergen_name in sorted_allergen_names:
             # Ignore HSA Diluent for manual editing; it will be re-calculated on save
             if allergen_name == "HSA Diluent":
                 continue
@@ -1765,6 +1804,7 @@ def edit_prescription_volumes():
     
     def save_changes():
         """Validate and save vial and volume changes."""
+        global last_vials, last_prescription_data
         try:
             new_vial_assignments = {} # label -> {name: vol}
             
@@ -1787,12 +1827,18 @@ def edit_prescription_volumes():
                     new_vial_assignments[vial_label] = {}
                 new_vial_assignments[vial_label][allergen_name] = new_vol
             
-            # Check total volumes per vial
+            # Check total volumes per vial and auto-adjust if needed
             for label, allergens in new_vial_assignments.items():
                 total = sum(allergens.values())
+
+                # If total exceeds 5.0 mL, proportionally scale down allergens to fit
                 if total > 5.0:
-                    messagebox.showerror("Error", f"{label}: total volume ({total:.2f} mL) exceeds 5.00 mL limit")
-                    return
+                    scale_factor = 4.9 / total  # Leave 0.1 mL for diluent
+                    for allergen_name in allergens:
+                        allergens[allergen_name] = round(allergens[allergen_name] * scale_factor, 2)
+                    messagebox.showinfo("Auto-Adjusted",
+                        f"{label}: Allergen volumes exceeded 5.0 mL. "
+                        f"Volumes have been proportionally scaled to fit in the vial.")
             
             # Create new Vial objects and enforce compatibility
             updated_vials = []
@@ -1984,16 +2030,17 @@ def export_prescription_to_pdf():
         dilutions = get_dilutions(last_prescription_data['vial_type'], last_prescription_data['treatment_type'])
         dilution_heading = Paragraph("<b>Dilutions</b>", heading_style)
         story.append(dilution_heading)
-        
-        dilution_text = ""
+
         for color, ratio in dilutions:
-            dilution_text += f"{color} = {ratio}    "
-        dilution_para = Paragraph(dilution_text, normal_style)
-        story.append(dilution_para)
+            dilution_para = Paragraph(f"{color} = {ratio}", normal_style)
+            story.append(dilution_para)
         story.append(Spacer(1, 0.06*inch))
-        
-        # Vial Composition Section - Compact
-        composition_heading = Paragraph(f"VIAL COMPOSITION ({len(last_vials)} vial(s))", heading_style)
+
+        # Vial Composition Section - Compact with treatment type label
+        treatment_label = last_prescription_data.get('treatment_type', 'New Start')
+        if treatment_label == "New Start":
+            treatment_label = "Build Up"
+        composition_heading = Paragraph(f"<b>{treatment_label} - VIAL COMPOSITION ({len(last_vials)} vial(s))</b>", heading_style)
         story.append(composition_heading)
         story.append(Spacer(1, 0.04*inch))
         
@@ -2005,16 +2052,20 @@ def export_prescription_to_pdf():
             # Vial contents table
             vial_contents = []
             diluent_vol = vial.remaining_volume()
-            for allergen, volume in vial.allergens.items():
-                if allergen == "HSA Diluent":
-                    diluent_vol += volume
-                    continue
-                vial_contents.append([allergen, f"{volume:.2f} mL"])
+
+            # Sort allergens by group priority
+            sorted_allergen_names = sort_allergens_by_group([name for name in vial.allergens.keys() if name != "HSA Diluent"])
+
+            for allergen_name in sorted_allergen_names:
+                volume = vial.allergens[allergen_name]
+                vial_contents.append([allergen_name, f"{volume:.2f} mL"])
+
             vial_contents.append(["Diluent:", f"{diluent_vol:.2f} mL"])
             
             vial_table = Table(vial_contents, colWidths=[3.5*inch, 0.8*inch])
-            vial_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e8f4f8')),
+
+            # Build table style with alternating row colors
+            table_style = [
                 ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
                 ('ALIGN', (0, 0), (0, -1), 'LEFT'),
                 ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
@@ -2025,7 +2076,19 @@ def export_prescription_to_pdf():
                 ('RIGHTPADDING', (0, 0), (-1, -1), 2),
                 ('TOPPADDING', (0, 0), (-1, -1), 1),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 1)
-            ]))
+            ]
+
+            # Add alternating row colors
+            for row_idx in range(len(vial_contents)):
+                if row_idx % 2 == 0:
+                    table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#f5f5f5')))
+                else:
+                    table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.white))
+
+            # Highlight diluent row with light blue
+            table_style.append(('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e8f4f8')))
+
+            vial_table.setStyle(TableStyle(table_style))
             story.append(vial_table)
             story.append(Spacer(1, 0.04*inch))
         
@@ -2063,7 +2126,9 @@ def export_prescription_to_pdf():
         
         # Build PDF
         doc.build(story)
-        messagebox.showinfo("Success", f"Prescription exported to:\n{file_path}")
+        show_toast("Prescription exported successfully", duration=5000,
+                  link_text="Open Folder",
+                  link_action=lambda fp=file_path: os.startfile(os.path.dirname(fp)))
     
     except Exception as e:
         messagebox.showerror("Error", f"Failed to export PDF: {e}")
@@ -2210,8 +2275,10 @@ def generate_label_data():
             allergen_data = next((a for a in ALLERGENS if a["name"] == allergen_name), None)
             if allergen_data:
                 allergen_groups.add(allergen_data["group"])
-        
-        allergen_groups_str = ", ".join(sorted(allergen_groups))
+
+        # Sort allergen groups by priority
+        sorted_groups = sorted(allergen_groups, key=lambda g: GROUP_ORDER.index(g) if g in GROUP_ORDER else len(GROUP_ORDER))
+        allergen_groups_str = ", ".join(sorted_groups)
         
         # Get expiration for this vial
         vial_expiration = vial_expirations.get(vial.label, "TBD")
@@ -2270,17 +2337,17 @@ def generate_label_data():
 
 def generate_labels_pdf(file_path):
     """Generate a PDF with labels in Avery 45160 format.
-    
+
     Creates a multi-page PDF if needed, with all labels properly positioned
     on Avery 45160 label sheets.
     """
     try:
         label_data_list = generate_label_data()
-        
+
         if not label_data_list:
             messagebox.showerror("Error", "No prescription generated. Please generate a prescription first.")
             return
-        
+
         # Create PDF
         c = canvas.Canvas(file_path, pagesize=(8.5*inch, 11*inch))
         
@@ -2385,7 +2452,9 @@ def generate_labels_pdf(file_path):
         
         # Save the final page
         c.save()
-        show_toast("Labels exported successfully")
+        show_toast("Labels exported successfully", duration=5000,
+                  link_text="Open Folder",
+                  link_action=lambda fp=file_path: os.startfile(os.path.dirname(fp)))
         
     except Exception as e:
         messagebox.showerror("Error", f"Failed to generate labels: {e}")
@@ -2481,7 +2550,10 @@ def create_compounding_log(patient_id, patient_name, dob, vial_type, treatment_t
 
         # Add items for each vial and allergen
         for vial in vials:
-            for allergen_name, volume_used in vial.allergens.items():
+            # Sort allergens by group priority
+            sorted_allergen_names = sort_allergens_by_group(list(vial.allergens.keys()))
+            for allergen_name in sorted_allergen_names:
+                volume_used = vial.allergens[allergen_name]
                 stock = get_stock_for_allergen(allergen_name, require_active=True)
                 if not stock:
                     stock = get_stock_for_allergen(allergen_name)
@@ -2714,7 +2786,9 @@ def export_compounding_log_pdf():
             
             # Build PDF
             doc.build(story)
-            show_toast("Compounding log exported successfully")
+            show_toast("Compounding log exported successfully", duration=5000,
+                      link_text="Open Folder",
+                      link_action=lambda fp=file_path: os.startfile(os.path.dirname(fp)))
         
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate compounding log PDF: {e}")
@@ -3211,7 +3285,8 @@ def show_inventory_and_staff():
                 values = tree.item(selected_item)['values']
                 entries.append((values[0], values[1], values[4]))
 
-            if messagebox.askyesno("Confirm Delete", f"Delete {len(entries)} selected item(s)?"):
+            if messagebox.askyesno("Confirm Delete",
+                f"Are you sure you want to permanently delete {len(entries)} selected item(s)?\n\nThis action cannot be undone."):
                 try:
                     conn = sqlite3.connect(DB_FILE)
                     cursor = conn.cursor()
@@ -3333,7 +3408,8 @@ def show_inventory_and_staff():
                 messagebox.showwarning("Warning", "Please select a staff member to delete.")
                 return
 
-            if not messagebox.askyesno("Confirm Delete", f"Delete {len(selected)} staff member(s)?"):
+            if not messagebox.askyesno("Confirm Delete",
+                f"Are you sure you want to permanently delete {len(selected)} staff member(s)?\n\nThis action cannot be undone."):
                 return
 
             try:
@@ -3418,6 +3494,111 @@ def on_selection_changed(*args):
             result_label.config(text="⚠️ PRESCRIPTION OUTDATED\n\nAllergen selections have changed. Click Generate to create an updated prescription.", fg="#d97706")
 
 
+def save_current_patient():
+    """Save current patient data without clearing the form."""
+    patient_name = patient_name_entry.get().strip()
+    mrn = mrn_entry.get().strip()
+
+    if not patient_name or not mrn:
+        messagebox.showerror("Error", "Please enter patient name and MRN before saving.")
+        return
+
+    try:
+        dob = dob_entry.get_date()
+        address = address_entry.get()
+        city = city_entry.get()
+        state = state_entry.get()
+        zip_code = zip_entry.get()
+        phone = phone_entry.get()
+        treatment_type = treatment_type_var.get()
+
+        # Get selected allergens
+        mode = vial_type_var.get()
+        if mode == "Environmental":
+            selected_allergens = [
+                allergen for allergen, var in environmental_allergen_vars.items() if var.get()
+            ]
+        elif mode == "Venom":
+            selected_allergens = [
+                allergen for allergen, var in venom_allergen_vars.items() if var.get()
+            ]
+        else:
+            selected_allergens = []
+
+        selected_allergens_str = ", ".join(selected_allergens) if selected_allergens else ""
+
+        patient_data = {
+            'patient_name': patient_name,
+            'dob': dob,
+            'mrn': mrn,
+            'address': address,
+            'city': city,
+            'state': state,
+            'zip_code': zip_code,
+            'phone': phone,
+            'treatment_type': treatment_type
+        }
+
+        # Save the patient
+        save_patient_data(patient_data, selected_allergens_str)
+    except ValueError:
+        messagebox.showerror("Error", "Invalid date of birth entered.")
+    except Exception as e:
+        messagebox.showerror("Error", f"Could not save patient data: {e}")
+
+
+def new_patient():
+    """Save current patient (if any data entered) and start fresh with new patient."""
+    patient_name = patient_name_entry.get().strip()
+    mrn = mrn_entry.get().strip()
+
+    # Only save if patient has name and MRN
+    if patient_name and mrn:
+        try:
+            dob = dob_entry.get_date()
+            address = address_entry.get()
+            city = city_entry.get()
+            state = state_entry.get()
+            zip_code = zip_entry.get()
+            phone = phone_entry.get()
+            treatment_type = treatment_type_var.get()
+
+            # Get selected allergens
+            mode = vial_type_var.get()
+            if mode == "Environmental":
+                selected_allergens = [
+                    allergen for allergen, var in environmental_allergen_vars.items() if var.get()
+                ]
+            elif mode == "Venom":
+                selected_allergens = [
+                    allergen for allergen, var in venom_allergen_vars.items() if var.get()
+                ]
+            else:
+                selected_allergens = []
+
+            selected_allergens_str = ", ".join(selected_allergens) if selected_allergens else ""
+
+            patient_data = {
+                'patient_name': patient_name,
+                'dob': dob,
+                'mrn': mrn,
+                'address': address,
+                'city': city,
+                'state': state,
+                'zip_code': zip_code,
+                'phone': phone,
+                'treatment_type': treatment_type
+            }
+
+            # Save the patient
+            save_patient_data(patient_data, selected_allergens_str)
+        except Exception as e:
+            messagebox.showwarning("Save Warning", f"Could not save current patient data: {e}")
+
+    # Clear all fields for new patient
+    clear_fields()
+
+
 def clear_fields():
     """Clears all input fields and checkbox selections."""
     global prescription_generated
@@ -3459,6 +3640,9 @@ root.config(menu=menubar)
 
 file_menu = tk.Menu(menubar, tearoff=0)
 menubar.add_cascade(label="File", menu=file_menu)
+file_menu.add_command(label="Save", command=save_current_patient)
+file_menu.add_command(label="New Patient", command=new_patient)
+file_menu.add_separator()
 file_menu.add_command(label="Settings", command=open_settings)
 file_menu.add_command(label="Dose Ranges", command=open_dose_ranges_window)
 file_menu.add_separator()
@@ -3608,17 +3792,17 @@ state_label.grid(row=5, column=0, padx=6, pady=4, sticky="w")
 state_entry = ttk.Entry(patient_info_frame, width=40)
 state_entry.grid(row=5, column=1, padx=6, pady=4, sticky="ew")
 
-# Phone Number
-phone_label = ttk.Label(patient_info_frame, text="Phone Number:", style='Subheader.TLabel')
-phone_label.grid(row=6, column=0, padx=6, pady=4, sticky="w")
-phone_entry = ttk.Entry(patient_info_frame, width=40)
-phone_entry.grid(row=6, column=1, padx=6, pady=4, sticky="ew")
-
 # Zip Code
 zip_label = ttk.Label(patient_info_frame, text="Zip Code:", style='Subheader.TLabel')
-zip_label.grid(row=7, column=0, padx=6, pady=4, sticky="w")
+zip_label.grid(row=6, column=0, padx=6, pady=4, sticky="w")
 zip_entry = ttk.Entry(patient_info_frame, width=40)
-zip_entry.grid(row=7, column=1, padx=6, pady=4, sticky="ew")
+zip_entry.grid(row=6, column=1, padx=6, pady=4, sticky="ew")
+
+# Phone Number
+phone_label = ttk.Label(patient_info_frame, text="Phone Number:", style='Subheader.TLabel')
+phone_label.grid(row=7, column=0, padx=6, pady=4, sticky="w")
+phone_entry = ttk.Entry(patient_info_frame, width=40)
+phone_entry.grid(row=7, column=1, padx=6, pady=4, sticky="ew")
 
 patient_info_frame.columnconfigure(1, weight=1)
 
