@@ -50,6 +50,40 @@ def get_app_version():
 
 APP_VERSION = get_app_version()
 
+# --- Window Centering Utility ---
+def center_window(window, parent=None):
+    """Center a window on the screen or on the parent window."""
+    window.update_idletasks()
+    if parent:
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - (window.winfo_width() // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (window.winfo_height() // 2)
+    else:
+        x = (window.winfo_screenwidth() // 2) - (window.winfo_width() // 2)
+        y = (window.winfo_screenheight() // 2) - (window.winfo_height() // 2)
+    window.geometry(f"+{x}+{y}")
+
+# --- Window Management ---
+open_windows = {}  # Track open pop-up windows by name
+
+def register_window(window_name, window):
+    """Register an open window and clean it up when it closes."""
+    if window_name in open_windows and open_windows[window_name].winfo_exists():
+        # Window already open, bring it to front
+        open_windows[window_name].lift()
+        open_windows[window_name].focus()
+        return False  # Signal that a new window was not created
+
+    # Register the new window
+    open_windows[window_name] = window
+
+    def on_window_close():
+        if window_name in open_windows:
+            del open_windows[window_name]
+        window.destroy()
+
+    window.protocol("WM_DELETE_WINDOW", on_window_close)
+    return True  # Signal that the window was created
+
 # --- Config File Management ---
 def get_config_path():
     """Get the path to the user's config file in Documents (cross-platform)."""
@@ -63,23 +97,38 @@ def get_config_path():
         print(f"Warning: Could not determine Documents path: {e}")
         return None
 
+def get_default_database_path():
+    """Get the default database path in AppData/Local for better permissions on work machines."""
+    try:
+        # Use AppData/Local which typically has write permissions on work laptops
+        home = Path.home()
+        app_data = home / "AppData" / "Local" / "UC_AIT_Generator"
+        app_data.mkdir(parents=True, exist_ok=True)
+        return str(app_data / "UC_Allergy_AIT.db")
+    except Exception:
+        # Fallback to working directory if AppData not accessible
+        return os.path.join(WORKING_DIR, "UC_Allergy_AIT.db")
+
 def load_config():
     """Load config from Documents folder. Returns dict with defaults if not found."""
     config_path = get_config_path()
+    default_db_path = get_default_database_path()
+
     if not config_path:
         return {
-            "database_path": os.path.join(WORKING_DIR, "UC_Allergy_AIT.db"),
+            "database_path": default_db_path,
             "last_save_directory": WORKING_DIR,
             "allergen_overrides": {}
         }
-    
+
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
-                # Validate paths exist; return defaults if not
-                if not os.path.exists(config.get("database_path", "")):
-                    config["database_path"] = os.path.join(WORKING_DIR, "UC_Allergy_AIT.db")
+                # Validate database path exists; use default if not
+                db_path = config.get("database_path", "")
+                if not db_path or not os.path.exists(os.path.dirname(db_path)):
+                    config["database_path"] = default_db_path
                 if not os.path.exists(config.get("last_save_directory", "")):
                     config["last_save_directory"] = WORKING_DIR
                 if not isinstance(config.get("allergen_overrides"), dict):
@@ -88,14 +137,14 @@ def load_config():
         except Exception as e:
             print(f"Warning: Could not load config: {e}")
             return {
-                "database_path": os.path.join(WORKING_DIR, "UC_Allergy_AIT.db"),
+                "database_path": default_db_path,
                 "last_save_directory": WORKING_DIR,
                 "allergen_overrides": {}
             }
     else:
-        # First launch - return defaults
+        # First launch - return defaults with AppData path
         return {
-            "database_path": os.path.join(WORKING_DIR, "UC_Allergy_AIT.db"),
+            "database_path": default_db_path,
             "last_save_directory": WORKING_DIR,
             "allergen_overrides": {}
         }
@@ -194,6 +243,7 @@ def handle_first_launch():
         choice_window.title("Database Setup")
         choice_window.geometry("400x150")
         choice_window.resizable(False, False)
+        center_window(choice_window, temp_root)
 
         ttk.Label(choice_window, text="Select an option:", font=('Segoe UI', 11, 'bold')).pack(pady=15)
 
@@ -268,7 +318,7 @@ DEFAULT_ALLERGENS = [
     # Weed Group
     {"name": "Cocklebur", "group": "Weed", "min_volume": 0.5, "max_volume": 1.0, "incompatible_groups": ["Mold", "Amer. Cockroach", "Ger. Cockroach"]},
     {"name": "Yellow Dock (Sheep Sorrel)", "group": "Weed", "min_volume": 0.5, "max_volume": 1.0, "incompatible_groups": ["Mold", "Amer. Cockroach", "Ger. Cockroach"]},
-    {"name": "Kochia (Firebush)", "group": "Weed", "min_volume": 0.5, "max_volume": 1.0, "incompatible_groups": ["Mold", "Amer. Cockroach", "Ger. Cockroach"]},
+    {"name": "Kochia (Burning Bush)", "group": "Weed", "min_volume": 0.5, "max_volume": 1.0, "incompatible_groups": ["Mold", "Amer. Cockroach", "Ger. Cockroach"]},
     {"name": "Lamb's Quarter", "group": "Weed", "min_volume": 0.5, "max_volume": 1.0, "incompatible_groups": ["Mold", "Amer. Cockroach", "Ger. Cockroach"]},
     {"name": "Mugwort", "group": "Weed", "min_volume": 0.5, "max_volume": 1.0, "incompatible_groups": ["Mold", "Amer. Cockroach", "Ger. Cockroach"]},
     {"name": "Pigweed", "group": "Weed", "min_volume": 0.5, "max_volume": 1.0, "incompatible_groups": ["Mold", "Amer. Cockroach", "Ger. Cockroach"]},
@@ -299,6 +349,17 @@ ALLERGENS = apply_allergen_overrides(DEFAULT_ALLERGENS, CURRENT_CONFIG)
 
 # Define allergen group order for display
 GROUP_ORDER = ["Mold", "Tree", "Grass", "Weed", "Other"]
+
+# Define quick-set volumes for common allergens in Edit Volumes dialog
+ALLERGEN_QUICK_VOLUMES = {
+    "Cat": [1.0, 2.0, 3.0, 4.0],
+    "Dust Mite Mix": [0.5, 1.0, 1.5, 2.0],
+    "Ragweed": [0.3, 0.4, 0.5, 0.6],
+    "Bermuda": [0.3, 0.5, 1.0],
+    "Timothy": [0.1, 0.2, 0.3, 0.4],
+    # Default for all other allergens
+    "_default": [0.5, 1.0]
+}
 
 def sort_allergens_by_group(allergen_names):
     """Sort allergen names by group priority (Mold, Tree, Grass, Weed, Other), then alphabetically within each group."""
@@ -336,7 +397,6 @@ mix_preparer_var = None  # Will be initialized in UI setup
 last_compounding_log_id = None  # Will store the compounding log ID for PDF export
 last_save_directory = CURRENT_CONFIG.get("last_save_directory", WORKING_DIR)  # Remember the last save directory for file dialogs
 prescription_generated = False  # Track if current displayed prescription matches current selections
-preserve_manual_edits_var = None  # Will be initialized in UI setup
 
 # --- Avery 45160 Label Specifications ---
 # Avery 45160 Address Labels: 30 labels per sheet (6 rows × 5 columns)
@@ -450,6 +510,126 @@ def init_database():
             )
         ''')
 
+        # Create patient_prescriptions table to store prescriptions for each patient (can have multiple per patient, one per vial type)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS patient_prescriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patient_id INTEGER NOT NULL,
+                vial_type TEXT NOT NULL,
+                treatment_type TEXT,
+                max_volume REAL DEFAULT 5.0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(patient_id, vial_type),
+                FOREIGN KEY(patient_id) REFERENCES patients(id)
+            )
+        ''')
+
+        # CRITICAL: Verify and fix database schema
+        try:
+            print("Verifying patient_prescriptions schema...")
+            cursor.execute("PRAGMA foreign_keys=OFF")
+
+            # Check if we need to migrate by looking at the actual constraint
+            cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='patient_prescriptions'")
+            table_sql_result = cursor.fetchone()
+
+            needs_migration = False
+
+            if table_sql_result and table_sql_result[0]:
+                table_sql = table_sql_result[0]
+                # Check for old constraint pattern: patient_id with UNIQUE (not compound)
+                # Old pattern: "patient_id INTEGER UNIQUE" or similar
+                # New pattern: "UNIQUE(patient_id, vial_type)" or "UNIQUE(patient_id,vial_type)"
+                has_old_constraint = ("UNIQUE NOT NULL" in table_sql or "UNIQUE," in table_sql) and "UNIQUE(patient_id, vial_type)" not in table_sql and "UNIQUE(patient_id,vial_type)" not in table_sql
+
+                if has_old_constraint:
+                    print("  OLD UNIQUE constraint detected - MIGRATING SCHEMA")
+                    needs_migration = True
+                else:
+                    print("  Schema looks correct")
+            else:
+                print("  Could not check schema (table may not exist yet)")
+                needs_migration = False
+
+            if needs_migration:
+                print("Attempting to migrate patient_prescriptions table...")
+
+                # Back up existing data
+                cursor.execute("SELECT COUNT(*) FROM patient_prescriptions")
+                count = cursor.fetchone()[0]
+                print(f"  Found {count} existing records")
+
+                if count > 0:
+                    # Create backup
+                    cursor.execute("ALTER TABLE patient_prescriptions RENAME TO patient_prescriptions_backup")
+                    print("  Backed up old table")
+
+                    # Create new table with correct schema
+                    cursor.execute('''
+                        CREATE TABLE patient_prescriptions (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            patient_id INTEGER NOT NULL,
+                            vial_type TEXT NOT NULL,
+                            treatment_type TEXT,
+                            max_volume REAL DEFAULT 5.0,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE(patient_id, vial_type),
+                            FOREIGN KEY(patient_id) REFERENCES patients(id)
+                        )
+                    ''')
+
+                    # Copy data with proper vial_type assignment
+                    cursor.execute('''
+                        INSERT INTO patient_prescriptions (id, patient_id, vial_type, treatment_type, max_volume, created_at, updated_at)
+                        SELECT id, patient_id, COALESCE(vial_type, 'Environmental'), treatment_type, COALESCE(max_volume, 5.0), created_at, updated_at
+                        FROM patient_prescriptions_backup
+                    ''')
+
+                    cursor.execute("DROP TABLE patient_prescriptions_backup")
+                    print("  Migration complete - data preserved")
+                else:
+                    # No data, just recreate
+                    cursor.execute("DROP TABLE IF EXISTS patient_prescriptions")
+                    cursor.execute('''
+                        CREATE TABLE patient_prescriptions (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            patient_id INTEGER NOT NULL,
+                            vial_type TEXT NOT NULL,
+                            treatment_type TEXT,
+                            max_volume REAL DEFAULT 5.0,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE(patient_id, vial_type),
+                            FOREIGN KEY(patient_id) REFERENCES patients(id)
+                        )
+                    ''')
+                    print("  Created new empty table with correct schema")
+
+            cursor.execute("PRAGMA foreign_keys=ON")
+
+        except Exception as e:
+            print(f"ERROR during schema verification: {e}")
+            try:
+                cursor.execute("PRAGMA foreign_keys=ON")
+            except:
+                pass
+
+
+        # Create patient_prescription_vials table to store vial compositions
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS patient_prescription_vials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prescription_id INTEGER NOT NULL,
+                vial_letter TEXT,
+                allergen_name TEXT,
+                volume REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(prescription_id) REFERENCES patient_prescriptions(id)
+            )
+        ''')
+
         # Insert default staff members if they don't exist
         try:
             cursor.execute("INSERT OR IGNORE INTO staff_members (name, role) VALUES (?, ?)",
@@ -465,6 +645,25 @@ def init_database():
         conn.close()
     except Exception as e:
         messagebox.showerror("Database Error", f"Failed to initialize database: {e}")
+
+
+def check_database_connection():
+    """Check if database connection is working. Returns (bool, str) - (is_connected, status_message)"""
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=5)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        conn.close()
+        return True, f"[OK] Connected: {os.path.basename(DB_FILE)}"
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e).lower():
+            return False, f"[WARN] Database locked (check permissions): {os.path.basename(DB_FILE)}"
+        elif "unable to open database file" in str(e).lower():
+            return False, f"[ERROR] Cannot access: {os.path.basename(DB_FILE)}"
+        else:
+            return False, f"[ERROR] Connection error: {str(e)[:50]}"
+    except Exception as e:
+        return False, f"[ERROR] Error: {str(e)[:50]}"
 
 
 def import_stock_csv(csv_file_path):
@@ -516,7 +715,8 @@ def import_stock_csv(csv_file_path):
         mapping_window = tk.Toplevel(root)
         mapping_window.title("Manual Stock Import Matching")
         mapping_window.geometry("1000x700")
-        
+        center_window(mapping_window, root)
+
         instruction_label = tk.Label(mapping_window, text="Select the matching allergen from the dropdown for each CSV item, then click Import to add it to the database.",
                                      wraplength=900, justify=tk.LEFT, bg="#f0f2f5", fg="#2c3e50")
         instruction_label.pack(fill=tk.X, padx=10, pady=10)
@@ -643,6 +843,7 @@ class Vial:
         self.label = label
         self.allergens = {}
         self.current_volume = 0.0
+        self.custom_max_volume = 5.0  # Default to 5 mL, can be overridden
 
     def add_allergen(self, allergen_name, volume):
         """Adds an allergen to the vial if compatible and within volume limits."""
@@ -653,7 +854,7 @@ class Vial:
         if not self.is_compatible(allergen_data):
             return False
 
-        if self.current_volume + volume > 5.0:
+        if self.current_volume + volume > self.custom_max_volume:
             return False
 
         if not (allergen_data["min_volume"] <= volume <= allergen_data["max_volume"]):
@@ -665,7 +866,7 @@ class Vial:
 
     def remaining_volume(self):
         """Calculates the remaining volume in the vial."""
-        return 5.0 - self.current_volume
+        return self.custom_max_volume - self.current_volume
 
     def is_compatible(self, allergen_data):
         """Checks if an allergen is compatible with the current vial contents.
@@ -707,11 +908,16 @@ class Vial:
 def open_settings():
     """Open Settings window to change database path."""
     global DB_FILE, CURRENT_CONFIG
-    
+
     settings_window = tk.Toplevel(root)
     settings_window.title("Settings")
     settings_window.geometry("600x300")
-    
+    center_window(settings_window, root)
+
+    # Prevent duplicate windows
+    if not register_window("settings", settings_window):
+        return
+
     # Database Path Section
     ttk.Label(settings_window, text="Database File:", font=('Segoe UI', 10, 'bold')).pack(padx=10, pady=(10, 5), anchor="w")
     
@@ -729,6 +935,7 @@ def open_settings():
         choice_window.title("Database Selection")
         choice_window.geometry("400x150")
         choice_window.resizable(False, False)
+        center_window(choice_window, root)
 
         # Center the window
         choice_window.transient(root)
@@ -827,6 +1034,12 @@ def open_dose_ranges_window():
     dose_window = tk.Toplevel(root)
     dose_window.title("Dose Ranges")
     dose_window.geometry("1000x650")
+    center_window(dose_window, root)
+
+    # Prevent duplicate windows
+    if not register_window("dose_ranges", dose_window):
+        return
+
     bg_color = BG_COLOR if "BG_COLOR" in globals() else root.cget("bg")
     dose_window.configure(bg=bg_color)
 
@@ -1115,24 +1328,35 @@ def serialize_vials_to_json(vials, mode, treatment_type):
 
 def save_patient_data(patient_data, selected_allergens, prescription_json=None):
     """Saves patient data and selected allergens to the SQLite database.
-    
+
     Args:
         patient_data: Dictionary with patient information
         selected_allergens: Comma-separated string of allergen names
-        prescription_json: Optional JSON string of the prescription (vials and volumes)
+        prescription_json: Unused parameter kept for backward compatibility
     """
+    conn = None
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        
-        # Check if patient already exists by MRN
-        cursor.execute('SELECT id FROM patients WHERE mrn = ?', (patient_data['mrn'],))
+
+        # Normalize all string fields to remove leading/trailing whitespace
+        normalized_data = {}
+        for key, value in patient_data.items():
+            if isinstance(value, str):
+                normalized_data[key] = value.strip()
+            else:
+                normalized_data[key] = value
+
+        patient_data = normalized_data
+
+        # Check if patient already exists by MRN (using TRIM to handle old data with trailing spaces)
+        cursor.execute('SELECT id FROM patients WHERE TRIM(mrn) = ?', (patient_data['mrn'],))
         existing_patient = cursor.fetchone()
-        
+
         if existing_patient:
             # Update existing patient without prompting
             cursor.execute('''
-                UPDATE patients SET 
+                UPDATE patients SET
                     patient_name = ?,
                     dob = ?,
                     address = ?,
@@ -1142,7 +1366,7 @@ def save_patient_data(patient_data, selected_allergens, prescription_json=None):
                     phone = ?,
                     allergens = ?,
                     treatment_type = ?,
-                    last_prescription_json = ?,
+                    prescriber_name = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE mrn = ?
             ''', (
@@ -1155,14 +1379,14 @@ def save_patient_data(patient_data, selected_allergens, prescription_json=None):
                 patient_data['phone'],
                 selected_allergens,
                 patient_data.get('treatment_type', 'New Start'),
-                prescription_json,
+                prescriber_var.get() if prescriber_var else "",
                 patient_data['mrn']
             ))
         else:
             # Insert new patient
             cursor.execute('''
-                INSERT INTO patients 
-                (patient_name, dob, mrn, address, city, state, zip_code, phone, allergens, treatment_type, last_prescription_json)
+                INSERT INTO patients
+                (patient_name, dob, mrn, address, city, state, zip_code, phone, allergens, treatment_type, prescriber_name)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 patient_data['patient_name'],
@@ -1175,22 +1399,71 @@ def save_patient_data(patient_data, selected_allergens, prescription_json=None):
                 patient_data['phone'],
                 selected_allergens,
                 patient_data.get('treatment_type', 'New Start'),
-                prescription_json
+                prescriber_var.get() if prescriber_var else ""
             ))
-        
+
         conn.commit()
-        conn.close()
         show_toast(f"Patient '{patient_data['patient_name']}' saved successfully.")
-    
+
+    except sqlite3.OperationalError as e:
+        error_msg = str(e).lower()
+        if "database is locked" in error_msg or "disk i/o error" in error_msg:
+            messagebox.showerror("Database Error",
+                f"Cannot write to database (permission issue):\n{DB_FILE}\n\n"
+                "Check that:\n"
+                "1. The folder has write permissions\n"
+                "2. The database is not on a network drive\n"
+                "3. No antivirus software is blocking access\n\n"
+                "Try: Settings → Change database to a local folder")
+        else:
+            messagebox.showerror("Database Error", f"Database error: {e}")
     except sqlite3.IntegrityError:
         messagebox.showerror("Error", f"Patient with MRN '{patient_data['mrn']}' already exists.")
     except Exception as e:
         messagebox.showerror("Error", f"An error occurred while saving: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+def normalize_two_digit_year(date_obj):
+    """Convert 2-digit years to 4-digit years using standard cutoff (30+).
+
+    Ages 00-29 → 2000-2029 (recent births)
+    Ages 30-99 → 1930-1999 (typical patient age)
+
+    Args:
+        date_obj: datetime.date object that may have an unrealistic year
+
+    Returns:
+        datetime.date with corrected year if needed
+    """
+    current_year = datetime.datetime.now().year
+    year = date_obj.year
+
+    # If year is in 2000s+ but seems unrealistic (like 2086 when we typed 86)
+    if year > current_year + 1:
+        # This might be a 2-digit year interpretation error
+        # Apply standard cutoff: 30+ → 19XX, 00-29 → 20XX
+        year_2digit = year % 100
+        if year_2digit >= 30:
+            corrected_year = 1900 + year_2digit
+        else:
+            corrected_year = 2000 + year_2digit
+
+        try:
+            return date_obj.replace(year=corrected_year)
+        except ValueError:
+            return date_obj
+
+    return date_obj
+
 
 def load_patient():
     """Opens a new window to load an existing patient from the database."""
 
     def load_selected_patient():
+        global last_vials, last_prescription_data, last_compounding_log_id, prescription_generated
         selected_patient_str = patient_select_var.get()
         if not selected_patient_str:
             return
@@ -1204,21 +1477,25 @@ def load_patient():
             # Convert the DOB string to a date object
             dob_to_match = datetime.datetime.strptime(dob_part, "%m-%d-%Y").date()
 
-            # Query database
-            conn = sqlite3.connect(DB_FILE)
+            # Query database - get ID so we use the same patient for prescription loading
+            print(f"DEBUG: load_selected_patient - opening DB connection for patient lookup")
+            conn = sqlite3.connect(DB_FILE, timeout=15)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT patient_name, dob, mrn, address, city, state, zip_code, phone, allergens, treatment_type, last_prescription_json
+                SELECT id, patient_name, dob, mrn, address, city, state, zip_code, phone, allergens, treatment_type,
+                       COALESCE(prescriber_name, '') as prescriber_name
                 FROM patients
                 WHERE patient_name = ? AND dob = ?
             ''', (name_part, dob_part))
-            
+
             result = cursor.fetchone()
+            print(f"DEBUG: load_selected_patient - closing DB connection")
             conn.close()
+            print(f"DEBUG: load_selected_patient - connection closed")
 
             if result:
-                patient_name, dob, mrn, address, city, state, zip_code, phone, allergens_str, treatment_type, prescription_json = result
+                patient_id, patient_name, dob, mrn, address, city, state, zip_code, phone, allergens_str, treatment_type, prescriber_name = result
                 
                 # Populate the main window's fields
                 patient_name_entry.delete(0, tk.END)
@@ -1240,6 +1517,10 @@ def load_patient():
                 zip_entry.insert(0, zip_code if zip_code else "")
                 phone_entry.delete(0, tk.END)
                 phone_entry.insert(0, phone if phone else "")
+
+                # Set prescriber name
+                if prescriber_var:
+                    prescriber_var.set(prescriber_name if prescriber_name else "Yashu Dhamija MD")
 
                 # Load and set allergen checkboxes
                 selected_allergens = allergens_str.split(",") if allergens_str else []
@@ -1267,64 +1548,59 @@ def load_patient():
                 else:
                     vial_type_var.set("Environmental")
 
-                # Restore the previous prescription if available
-                if prescription_json:
-                    try:
-                        prescription_data = json.loads(prescription_json)
-                        vial_dicts = prescription_data.get('vials', [])
-                        
-                        # Restore vials from stored data
-                        global last_vials, last_prescription_data, last_compounding_log_id
-                        last_vials = []
-                        for vial_dict in vial_dicts:
-                            vial = Vial(vial_dict['label'])
-                            for allergen_name, volume in vial_dict['allergens'].items():
-                                vial.add_allergen(allergen_name, volume)
-                            last_vials.append(vial)
-                        
-                        # Populate prescription data for displaying
-                        last_prescription_data = {
-                            'patient_name': patient_name,
-                            'dob': dob,
-                            'mrn': mrn,
-                            'address': address,
-                            'city': city,
-                            'state': state,
-                            'zip_code': zip_code,
-                            'phone': phone,
-                            'vial_type': prescription_data.get('vial_type', 'Environmental'),
-                            'treatment_type': prescription_data.get('treatment_type', 'New Start'),
-                            'prescriber_name': prescriber_var.get() if prescriber_var else ""
-                        }
-                        
-                        # Get patient ID and recreate compounding log for current session
-                        try:
-                            conn = sqlite3.connect(DB_FILE)
-                            cursor = conn.cursor()
-                            cursor.execute("SELECT id FROM patients WHERE mrn = ?", (mrn,))
-                            patient_result = cursor.fetchone()
-                            patient_id = patient_result[0] if patient_result else None
-                            conn.close()
-                            
-                            # Create a new compounding log to enable PDF exports
-                            if patient_id and last_vials:
-                                last_compounding_log_id = create_compounding_log(
-                                    patient_id, 
-                                    patient_name, 
-                                    dob, 
-                                    prescription_data.get('vial_type', 'Environmental'),
-                                    prescription_data.get('treatment_type', 'New Start'),
-                                    last_vials
-                                )
-                        except Exception as e:
-                            print(f"Warning: Could not create compounding log: {e}")
-                        
-                        # Display the loaded prescription
-                        display_prescription_output(last_vials, last_prescription_data, prescription_data.get('vial_type', 'Environmental'))
-                        show_toast(f"Loaded prescription for {patient_name}")
-                    except Exception as e:
-                        print(f"Warning: Could not restore prescription: {e}")
+                # Try to load the saved prescription from database
+                try:
+                    # We already have patient_id from the first query, no need to look up again
+                    print(f"DEBUG: Patient lookup - name='{name_part}', dob='{dob_part}' -> patient_id={patient_id}")
 
+                    if patient_id:
+                        current_vial_type = vial_type_var.get() or "Environmental"
+                        print(f"DEBUG: Loading prescription for patient_id={patient_id}, vial_type={current_vial_type}")
+                        vials, loaded_vial_type, loaded_treatment_type = load_prescription_from_database(patient_id, current_vial_type)
+                        print(f"DEBUG: Loaded vials={len(vials) if vials else 0}, loaded_vial_type={loaded_vial_type}")
+
+                        if vials:
+                            global last_vials, last_prescription_data, last_compounding_log_id, prescription_generated
+                            last_vials = vials
+
+                            # Populate prescription data
+                            last_prescription_data = {
+                                'patient_name': patient_name,
+                                'dob': dob,
+                                'mrn': mrn,
+                                'address': address,
+                                'city': city,
+                                'state': state,
+                                'zip_code': zip_code,
+                                'phone': phone,
+                                'vial_type': loaded_vial_type,
+                                'treatment_type': loaded_treatment_type,
+                                'prescriber_name': prescriber_var.get() if prescriber_var else ""
+                            }
+
+
+                            # TODO: Don't create compounding log during load - create on-demand when printing
+                            # This avoids database lock issues
+                            # if patient_id and last_vials:
+                            #     last_compounding_log_id = create_compounding_log_with_retry(...)
+
+                            # Display the loaded prescription
+                            prescription_generated = True
+                            display_prescription_output(last_vials, last_prescription_data, loaded_vial_type)
+                            show_toast(f"Loaded prescription for {patient_name}")
+                        else:
+                            # No saved prescription for this patient - clear the display
+                            last_vials = []
+                            last_prescription_data = {}
+                            prescription_generated = False
+                            result_label.config(text="", fg=TEXT_COLOR)
+                            show_toast(f"No saved prescription for {patient_name}")
+
+                except Exception as e:
+                    print(f"Warning: Could not load prescription: {e}")
+
+                # Close the dropdown before destroying the window
+                patient_select_combo.event_generate('<Escape>')
                 load_window.destroy()
                 return
 
@@ -1359,6 +1635,8 @@ def load_patient():
             conn.close()
 
             show_toast(f"Deleted patient '{selected_patient_str}'")
+            # Close the dropdown before destroying the window
+            patient_select_combo.event_generate('<Escape>')
             load_window.destroy()
             load_patient()
 
@@ -1368,13 +1646,32 @@ def load_patient():
     # --- Create the Load Patient Window ---
     load_window = tk.Toplevel(root)
     load_window.title("Load Patient")
+    load_window.geometry("550x300")
+    center_window(load_window, root)
 
-    patient_select_label = ttk.Label(load_window, text="Select Patient (Name DOB):")
-    patient_select_label.pack(padx=10, pady=5)
+    # Main container frame
+    container = ttk.Frame(load_window, padding=15)
+    container.pack(fill=tk.BOTH, expand=True)
+
+    patient_select_label = ttk.Label(container, text="Select Patient (Name DOB):")
+    patient_select_label.pack(anchor="w", pady=(0, 5))
 
     patient_select_var = tk.StringVar()
-    patient_select_combo = ttk.Combobox(load_window, textvariable=patient_select_var)
-    patient_select_combo.pack(padx=10, pady=5)
+    patient_select_combo = ttk.Combobox(container, textvariable=patient_select_var, width=55)
+    patient_select_combo.pack(pady=(0, 15))
+
+    # Buttons - Created early so they're always visible
+    button_frame = ttk.Frame(container)
+    button_frame.pack(pady=(15, 0), fill=tk.X)
+
+    load_button = ttk.Button(button_frame, text="Load", command=load_selected_patient, width=15)
+    load_button.pack(side=tk.LEFT, padx=5)
+
+    delete_button = ttk.Button(button_frame, text="Delete", command=delete_selected_patient, width=15)
+    delete_button.pack(side=tk.LEFT, padx=5)
+
+    # Store original patient data for filtering
+    all_patients = []
 
     # Populate the dropdown with existing patient names and DOBs from database
     try:
@@ -1383,29 +1680,16 @@ def load_patient():
         cursor.execute('SELECT patient_name, dob FROM patients ORDER BY patient_name')
         rows = cursor.fetchall()
         conn.close()
-        
-        patient_strings = [f"{row[0]} {row[1]}" for row in rows]
+
+        all_patients = [{"name": row[0], "dob": row[1], "display": f"{row[0]} {row[1]}"} for row in rows]
+        patient_strings = [p["display"] for p in all_patients]
         patient_select_combo['values'] = patient_strings
 
         if not patient_strings:
             messagebox.showinfo("No Patients", "No patient data found. Add patients first.")
-            load_window.destroy()
-            return
 
     except Exception as e:
         messagebox.showerror("Error", f"Error loading patient list: {e}")
-        load_window.destroy()
-        return
-
-    # Buttons
-    button_frame = ttk.Frame(load_window)
-    button_frame.pack(pady=10)
-
-    load_button = ttk.Button(button_frame, text="Load", command=load_selected_patient)
-    load_button.pack(side=tk.LEFT, padx=5)
-
-    delete_button = ttk.Button(button_frame, text="Delete", command=delete_selected_patient)
-    delete_button.pack(side=tk.LEFT, padx=5)
 
 
 def generate_vials(selected_allergens, max_vials=3):
@@ -1563,20 +1847,20 @@ def generate_prescription():
     mode = vial_type_var.get()
     treatment_type = treatment_type_var.get()
     prescriber_name = prescriber_var.get() if prescriber_var else ""
-    patient_name = patient_name_entry.get()
-    mrn = mrn_entry.get()
-    address = address_entry.get()
-    city = city_entry.get()
-    state = state_entry.get()
-    zip_code = zip_entry.get()
-    phone = phone_entry.get()
+    patient_name = patient_name_entry.get().strip()
+    mrn = mrn_entry.get().strip()
+    address = address_entry.get().strip()
+    city = city_entry.get().strip()
+    state = state_entry.get().strip()
+    zip_code = zip_entry.get().strip()
+    phone = phone_entry.get().strip()
 
     if not patient_name or not mrn:
         messagebox.showerror("Error", "Please enter patient name and MRN.")
         return
 
     try:
-        dob = dob_entry.get_date()
+        dob = normalize_two_digit_year(dob_entry.get_date())
     except ValueError:
         messagebox.showerror("Error", "Invalid date of birth entered.")
         return
@@ -1618,13 +1902,6 @@ def generate_prescription():
         result_label.config(text="Error: Cannot select both 'Dog - Epithelium' and 'Dog - UF'.\nPlease select only one dog extract.")
         return
 
-    # If preserve manual edits is enabled and we already have a prescription, just refresh display
-    if preserve_manual_edits_var and preserve_manual_edits_var.get() and prescription_generated and last_vials:
-        result_label.config(text="", fg=TEXT_COLOR)
-        display_prescription_output(last_vials, last_prescription_data, mode)
-        show_toast("Prescription refreshed (manual edits preserved)")
-        return
-
     # Generate vials with proper distribution (algorithm mode)
     max_vials = 4 if allow_fourth_vial_var and allow_fourth_vial_var.get() else 3
     vials = generate_vials(selected_allergens, max_vials=max_vials)
@@ -1633,9 +1910,8 @@ def generate_prescription():
         result_label.config(text="Error: Could not distribute allergens into vials.\nCheck allergen compatibility.")
         return
 
-    # Serialize the prescription for storage
-    prescription_json = serialize_vials_to_json(vials, mode, treatment_type)
-    save_patient_data(patient_data, selected_allergens_str, prescription_json)
+    # Save patient data
+    save_patient_data(patient_data, selected_allergens_str)
 
     # Get patient ID for compounding log
     try:
@@ -1647,6 +1923,10 @@ def generate_prescription():
         conn.close()
     except:
         patient_id = None
+
+    # Save prescription to database
+    if patient_id:
+        save_prescription_to_database(patient_id, vials, mode, treatment_type)
 
     # Store prescription data globally for PDF export
     last_prescription_data = {
@@ -1665,7 +1945,7 @@ def generate_prescription():
     last_vials = vials
 
     # Create compounding log using current vial contents
-    create_compounding_log(patient_id, patient_name, dob.strftime('%m-%d-%Y'), mode, treatment_type, vials)
+    create_compounding_log(patient_id, patient_name, dob.strftime('%m-%d-%Y'), mode, treatment_type, vials, expected_mix_date_var.get())
 
     # Display the prescription
     display_prescription_output(last_vials, last_prescription_data, mode)
@@ -1713,7 +1993,7 @@ def display_prescription_output(vials, prescription_data, vial_type):
                     continue
                 prescription_text += f"  • {allergen}: {volume:.2f} mL\n"
             prescription_text += f"  • Diluent: {diluent_vol:.2f} mL\n"
-            prescription_text += f"  Total: 5.00 mL\n"
+            prescription_text += f"  Total: {vial.custom_max_volume:.2f} mL\n"
         
         result_label.config(text=prescription_text)
     except Exception as e:
@@ -1723,16 +2003,21 @@ def display_prescription_output(vials, prescription_data, vial_type):
 def edit_prescription_volumes():
     """Open a window to manually edit allergen volumes and vial assignments in the current prescription."""
     global last_vials, last_prescription_data
-    
+
     if not last_vials or not last_prescription_data:
         messagebox.showwarning("Warning", "No prescription to edit. Please generate a prescription first.")
         return
-    
+
     # Create edit window
     edit_window = tk.Toplevel(root)
     edit_window.title("Edit Prescription: Volumes & Vials")
-    edit_window.geometry("750x600")
-    
+    edit_window.geometry("1125x600")
+    center_window(edit_window, root)
+
+    # Prevent duplicate windows
+    if not register_window("edit_prescription_volumes", edit_window):
+        return
+
     # Create frames for each vial
     allergen_controls = []  # List to store (allergen_name, vial_var, entry)
     
@@ -1750,7 +2035,21 @@ def edit_prescription_volumes():
     canvas.configure(yscrollcommand=scrollbar.set)
     canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-    
+
+    # Bind mousewheel events for scrolling
+    def _on_mousewheel(event):
+        if event.num == 4 or event.delta > 0:
+            canvas.yview_scroll(-3, "units")
+        elif event.num == 5 or event.delta < 0:
+            canvas.yview_scroll(3, "units")
+
+    canvas.bind("<MouseWheel>", _on_mousewheel)
+    canvas.bind("<Button-4>", _on_mousewheel)
+    canvas.bind("<Button-5>", _on_mousewheel)
+    scrollable_frame.bind("<MouseWheel>", _on_mousewheel)
+    scrollable_frame.bind("<Button-4>", _on_mousewheel)
+    scrollable_frame.bind("<Button-5>", _on_mousewheel)
+
     # Determine available vials for assignment
     max_allowed = 4 if (allow_fourth_vial_var and allow_fourth_vial_var.get()) else 3
     available_vials = [f"Vial {chr(65 + i)}" for i in range(max_allowed)]
@@ -1761,43 +2060,225 @@ def edit_prescription_volumes():
     ttk.Label(header_frame, text="Allergen", font=("Segoe UI", 10, "bold"), width=30).pack(side=tk.LEFT)
     ttk.Label(header_frame, text="Vial Assignment", font=("Segoe UI", 10, "bold"), width=15).pack(side=tk.LEFT)
     ttk.Label(header_frame, text="Volume (mL)", font=("Segoe UI", 10, "bold"), width=15).pack(side=tk.LEFT)
+    ttk.Label(header_frame, text="Quick Set", font=("Segoe UI", 10, "bold"), width=30).pack(side=tk.LEFT)
 
-    # Build edit controls for each vial
-    for vial in last_vials:
-        vial_frame = ttk.LabelFrame(scrollable_frame, text=f"{vial.label} (Current Total: {vial.current_volume:.2f} mL)")
+    # Helper function to create quick volume buttons for an allergen
+    def create_quick_buttons(parent_frame, entry_widget, allergen_name):
+        """Create quick-set volume buttons for an allergen."""
+        quick_volumes = ALLERGEN_QUICK_VOLUMES.get(allergen_name, ALLERGEN_QUICK_VOLUMES.get("_default", [0.5, 1.0]))
+
+        for volume in quick_volumes:
+            def set_volume(vol=volume):
+                entry_widget.delete(0, tk.END)
+                entry_widget.insert(0, f"{vol:.2f}")
+
+            btn = ttk.Button(parent_frame, text=f"{volume:.1f}", width=4, command=set_volume)
+            btn.pack(side=tk.LEFT, padx=1)
+
+    # Helper function to create vial selection buttons
+    def create_vial_buttons(parent_frame, v_var, current_vial, max_vials):
+        """Create compact buttons for vial selection (A, B, C, D)."""
+        button_frame = ttk.Frame(parent_frame)
+        button_frame.pack(side=tk.LEFT, padx=5)
+
+        buttons = []
+        vial_letters = []
+
+        # Create all buttons first
+        for i in range(max_vials):
+            vial_letter = chr(65 + i)  # A, B, C, D
+            full_vial_label = f"Vial {vial_letter}"
+
+            btn = tk.Button(button_frame, text=vial_letter, width=3, relief=tk.RAISED, bd=1)
+            btn.pack(side=tk.LEFT, padx=1)
+
+            buttons.append(btn)
+            vial_letters.append((vial_letter, full_vial_label))
+
+        # Now assign commands with proper closure
+        for idx, (btn, (letter, full_label)) in enumerate(zip(buttons, vial_letters)):
+            def create_set_vial(vial_name, btn_idx):
+                def set_vial():
+                    v_var.set(vial_name)
+                    # Update button styling to show selection
+                    for j, b in enumerate(buttons):
+                        if j == btn_idx:
+                            b.config(relief=tk.SUNKEN)
+                        else:
+                            b.config(relief=tk.RAISED)
+                return set_vial
+
+            btn.config(command=create_set_vial(full_label, idx))
+
+            # Highlight current selection
+            if full_label == current_vial:
+                btn.config(relief=tk.SUNKEN)
+            else:
+                btn.config(relief=tk.RAISED)
+
+
+    # Build edit controls for each vial - show ALL vials (A, B, C, D), even if empty
+    vial_frames = {}  # Store frame references for each vial
+    vial_total_labels = {}  # Store total volume labels for updating
+    vial_row_counts = {}  # Track number of rows per vial for better "Add" button placement
+
+    # Create frames for all available vials
+    for i in range(max_allowed):
+        vial_label = f"Vial {chr(65 + i)}"
+
+        # Find if this vial exists in last_vials
+        existing_vial = next((v for v in last_vials if v.label == vial_label), None)
+        current_total = existing_vial.current_volume if existing_vial else 0.0
+
+        # Create vial frame with total volume
+        vial_frame = ttk.LabelFrame(scrollable_frame, text=f"{vial_label} (Current Total: {current_total:.2f} mL)")
         vial_frame.pack(fill=tk.X, padx=5, pady=5)
+        vial_frames[vial_label] = vial_frame
 
-        # Sort allergens by group priority before displaying
-        sorted_allergen_names = sort_allergens_by_group([name for name in vial.allergens.keys() if name != "HSA Diluent"])
+        # Store reference to label widget for updating totals dynamically
+        label_text_var = tk.StringVar(value=f"{vial_label} (Current Total: {current_total:.2f} mL)")
+        vial_total_labels[vial_label] = (vial_frame, label_text_var)
 
-        for allergen_name in sorted_allergen_names:
-            # Ignore HSA Diluent for manual editing; it will be re-calculated on save
-            if allergen_name == "HSA Diluent":
-                continue
-                
-            current_volume = vial.allergens[allergen_name]
-            
-            row_frame = ttk.Frame(vial_frame)
-            row_frame.pack(fill=tk.X, padx=5, pady=3)
-            
-            label = ttk.Label(row_frame, text=f"{allergen_name}:", width=30)
-            label.pack(side=tk.LEFT, padx=5)
-            
-            # Vial Selector
-            v_var = tk.StringVar(value=vial.label)
-            v_combo = ttk.Combobox(row_frame, textvariable=v_var, values=available_vials, state="readonly", width=12)
-            v_combo.pack(side=tk.LEFT, padx=5)
+        vial_row_counts[vial_label] = 0
 
-            # Volume Entry
-            entry = ttk.Entry(row_frame, width=10)
-            entry.pack(side=tk.LEFT, padx=5)
-            entry.insert(0, f"{current_volume:.2f}")
-            
-            ml_label = ttk.Label(row_frame, text="mL")
-            ml_label.pack(side=tk.LEFT)
-            
-            allergen_controls.append((allergen_name, v_var, entry))
-    
+        # Add allergen rows if vial exists
+        if existing_vial:
+            sorted_allergen_names = sort_allergens_by_group([name for name in existing_vial.allergens.keys() if name != "HSA Diluent"])
+
+            for allergen_name in sorted_allergen_names:
+                if allergen_name == "HSA Diluent":
+                    continue
+
+                current_volume = existing_vial.allergens[allergen_name]
+
+                row_frame = ttk.Frame(vial_frame)
+                row_frame.pack(fill=tk.X, padx=5, pady=3)
+
+                label = ttk.Label(row_frame, text=f"{allergen_name}:", width=30)
+                label.pack(side=tk.LEFT, padx=5)
+
+                v_var = tk.StringVar(value=vial_label)
+                create_vial_buttons(row_frame, v_var, vial_label, max_allowed)
+
+                entry = ttk.Entry(row_frame, width=10)
+                entry.pack(side=tk.LEFT, padx=5)
+                entry.insert(0, f"{current_volume:.2f}")
+
+                # Add quick volume buttons (before mL label so they appear to the right of entry)
+                create_quick_buttons(row_frame, entry, allergen_name)
+
+                ml_label = ttk.Label(row_frame, text="mL")
+                ml_label.pack(side=tk.LEFT)
+
+                allergen_controls.append((allergen_name, v_var, entry, row_frame, False))  # False = not dynamically added
+                vial_row_counts[vial_label] += 1
+
+    # Function to add allergen row to a specific vial
+    def create_add_allergen_function(target_vial_label):
+        def add_allergen():
+            # Get list of all allergens except HSA Diluent
+            allergen_names = sorted([a["name"] for a in ALLERGENS if a["name"] != "HSA Diluent"])
+
+            # Create a simple dialog to select allergen
+            dialog = tk.Toplevel(edit_window)
+            dialog.title(f"Add Allergen to {target_vial_label}")
+            dialog.geometry("300x120")
+            dialog.resizable(False, False)
+            center_window(dialog, edit_window)
+
+            # Allergen selection dropdown
+            ttk.Label(dialog, text="Select Allergen:", font=("Segoe UI", 10)).pack(padx=10, pady=10)
+            allergen_var = tk.StringVar()
+            combo = ttk.Combobox(dialog, textvariable=allergen_var, values=allergen_names, state="readonly", width=30)
+            combo.pack(padx=10, pady=5, fill=tk.X)
+
+            def confirm_add():
+                selected = allergen_var.get()
+                if not selected:
+                    messagebox.showwarning("Warning", "Please select an allergen")
+                    return
+
+                dialog.destroy()
+
+                # Add new row to the vial
+                vial_frame = vial_frames[target_vial_label]
+
+                row_frame = ttk.Frame(vial_frame)
+                row_frame.pack(fill=tk.X, padx=5, pady=3)
+
+                allergen_label = ttk.Label(row_frame, text=f"{selected}:", width=30)
+                allergen_label.pack(side=tk.LEFT, padx=5)
+
+                v_var = tk.StringVar(value=target_vial_label)
+                create_vial_buttons(row_frame, v_var, target_vial_label, max_allowed)
+
+                entry = ttk.Entry(row_frame, width=10)
+                entry.pack(side=tk.LEFT, padx=5)
+                entry.insert(0, "1.00")  # Default volume
+
+                # Add quick volume buttons (before mL label so they appear to the right of entry)
+                create_quick_buttons(row_frame, entry, selected)
+
+                ml_label = ttk.Label(row_frame, text="mL")
+                ml_label.pack(side=tk.LEFT)
+
+                # Add delete button
+                def delete_row():
+                    row_frame.destroy()
+                    allergen_controls.remove((selected, v_var, entry, row_frame, True))
+
+                del_button = ttk.Button(row_frame, text="✕", width=2, command=delete_row)
+                del_button.pack(side=tk.LEFT, padx=2)
+
+                allergen_controls.append((selected, v_var, entry, row_frame, True))  # True = dynamically added
+                vial_row_counts[target_vial_label] += 1
+
+            ttk.Button(dialog, text="Add", command=confirm_add).pack(side=tk.LEFT, padx=5, pady=10)
+            ttk.Button(dialog, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5, pady=10)
+
+            dialog.wait_window()
+
+        return add_allergen
+
+    # Add "Add Allergen" button for each vial
+    for vial_label in available_vials:
+        add_button_frame = ttk.Frame(vial_frames[vial_label])
+        add_button_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        add_button = ttk.Button(add_button_frame, text=f"＋ Add Allergen to {vial_label}",
+                               command=create_add_allergen_function(vial_label))
+        add_button.pack(side=tk.LEFT)
+
+    # Override checkbox for compatibility rules
+    override_frame = ttk.Frame(edit_window)
+    override_frame.pack(fill=tk.X, padx=10, pady=10)
+    override_var = tk.BooleanVar(value=False)
+    override_check = ttk.Checkbutton(override_frame, text="🔓 Override Compatibility Rules", variable=override_var)
+    override_check.pack(side=tk.LEFT)
+
+    # Custom vial size input
+    custom_vial_frame = ttk.Frame(edit_window)
+    custom_vial_frame.pack(fill=tk.X, padx=10, pady=5)
+
+    custom_vial_var = tk.BooleanVar(value=False)
+    custom_vial_check = ttk.Checkbutton(custom_vial_frame, text="Custom Vial Size (mL):", variable=custom_vial_var)
+    custom_vial_check.pack(side=tk.LEFT, padx=5)
+
+    custom_vial_size_var = tk.StringVar(value="5.0")
+    custom_vial_entry = ttk.Entry(custom_vial_frame, textvariable=custom_vial_size_var, width=8, state=tk.DISABLED)
+    custom_vial_entry.pack(side=tk.LEFT, padx=5)
+
+    def toggle_custom_vial():
+        """Enable/disable custom vial size entry based on checkbox."""
+        if custom_vial_var.get():
+            custom_vial_entry.config(state=tk.NORMAL)
+            custom_vial_size_var.set(str(last_vials[0].custom_max_volume) if last_vials else "5.0")
+        else:
+            custom_vial_entry.config(state=tk.DISABLED)
+            custom_vial_size_var.set("5.0")
+
+    custom_vial_check.config(command=toggle_custom_vial)
+
     # Buttons
     button_frame = ttk.Frame(edit_window)
     button_frame.pack(fill=tk.X, padx=5, pady=10)
@@ -1806,46 +2287,68 @@ def edit_prescription_volumes():
         """Validate and save vial and volume changes."""
         global last_vials, last_prescription_data
         try:
+            # Get custom vial size if enabled
+            max_vial_volume = 5.0
+            if custom_vial_var.get():
+                try:
+                    max_vial_volume = float(custom_vial_size_var.get())
+                    if max_vial_volume <= 0:
+                        messagebox.showerror("Error", "Custom vial size must be greater than 0 mL")
+                        return
+                    if max_vial_volume > 100.0:  # Reasonable upper limit
+                        messagebox.showerror("Error", "Custom vial size exceeds reasonable limit (100 mL)")
+                        return
+                except ValueError:
+                    messagebox.showerror("Error", "Invalid custom vial size. Please enter a number.")
+                    return
+
             new_vial_assignments = {} # label -> {name: vol}
-            
-            # Collect and validate all entries
-            for allergen_name, v_var, entry in allergen_controls:
+
+            # Collect and validate all entries - handle new 5-tuple structure
+            for control_tuple in allergen_controls:
+                allergen_name, v_var, entry, row_frame, is_dynamic = control_tuple
                 vial_label = v_var.get()
                 try:
                     new_vol = float(entry.get())
                     if new_vol < 0.01:
                         messagebox.showerror("Error", f"{allergen_name}: minimum volume is 0.01 mL")
                         return
-                    if new_vol > 5.0:
-                        messagebox.showerror("Error", f"{allergen_name}: maximum volume is 5.0 mL")
+                    if new_vol > max_vial_volume:
+                        messagebox.showerror("Error", f"{allergen_name}: maximum volume is {max_vial_volume} mL for this vial size")
                         return
                 except ValueError:
                     messagebox.showerror("Error", f"Invalid volume for {allergen_name}")
                     return
-                
+
                 if vial_label not in new_vial_assignments:
                     new_vial_assignments[vial_label] = {}
-                new_vial_assignments[vial_label][allergen_name] = new_vol
-            
+
+                # Handle allergen splitting: if same allergen in same vial multiple times, sum them
+                if allergen_name in new_vial_assignments[vial_label]:
+                    new_vial_assignments[vial_label][allergen_name] += new_vol
+                else:
+                    new_vial_assignments[vial_label][allergen_name] = new_vol
+
             # Check total volumes per vial and auto-adjust if needed
             for label, allergens in new_vial_assignments.items():
                 total = sum(allergens.values())
 
-                # If total exceeds 5.0 mL, proportionally scale down allergens to fit
-                if total > 5.0:
-                    scale_factor = 4.9 / total  # Leave 0.1 mL for diluent
+                # If total exceeds custom max volume, proportionally scale down allergens to fit
+                if total > max_vial_volume:
+                    scale_factor = (max_vial_volume - 0.1) / total  # Leave 0.1 mL for diluent
                     for allergen_name in allergens:
                         allergens[allergen_name] = round(allergens[allergen_name] * scale_factor, 2)
                     messagebox.showinfo("Auto-Adjusted",
-                        f"{label}: Allergen volumes exceeded 5.0 mL. "
+                        f"{label}: Allergen volumes exceeded {max_vial_volume} mL. "
                         f"Volumes have been proportionally scaled to fit in the vial.")
-            
+
             # Create new Vial objects and enforce compatibility
             updated_vials = []
             allergen_map = {a["name"]: a for a in ALLERGENS}
-            
+
             for label in sorted(new_vial_assignments.keys()):
                 vial = Vial(label)
+                vial.custom_max_volume = max_vial_volume  # Set custom vial size
                 for name, vol in new_vial_assignments[label].items():
                     # Skip adding diluent here, we'll add it after compatibility checks
                     if name == "HSA Diluent":
@@ -1853,8 +2356,8 @@ def edit_prescription_volumes():
 
                     allergen_data = allergen_map.get(name)
                     if allergen_data:
-                        # Check compatibility
-                        if not vial.is_compatible(allergen_data):
+                        # Check compatibility (unless override is enabled)
+                        if not override_var.get() and not vial.is_compatible(allergen_data):
                             # Find which allergen it conflict with for a better error message
                             conflict_name = "existing contents"
                             for existing_name in vial.allergens.keys():
@@ -1863,63 +2366,62 @@ def edit_prescription_volumes():
                                 if not temp_vial.is_compatible(allergen_data):
                                     conflict_name = existing_name
                                     break
-                            
-                            messagebox.showerror("Compatibility Error", 
+
+                            messagebox.showerror("Compatibility Error",
                                 f"Incompatible Move: Cannot put '{name}' in {label}.\n\n"
                                 f"It is incompatible with {conflict_name} according to clinical rules.")
                             return
-                    
+
                     vial.allergens[name] = vol
                     vial.current_volume += vol
-                
-                # Automatically calculate and add HSA Diluent to reach 5.0 mL
-                diluent_needed = 5.0 - vial.current_volume
+
+                # Automatically calculate and add HSA Diluent to reach custom max volume
+                diluent_needed = max_vial_volume - vial.current_volume
                 if diluent_needed > 0:
                     vial.allergens["HSA Diluent"] = round(diluent_needed, 2)
-                    vial.current_volume = 5.0
-                
+                    vial.current_volume = max_vial_volume
+
                 updated_vials.append(vial)
-            
+
             last_vials = updated_vials
-            
+
             # Update prescription display
             display_prescription_output(last_vials, last_prescription_data, last_prescription_data['vial_type'])
-            
-            # Re-serialize prescription for storage
-            prescription_json = serialize_vials_to_json(last_vials, last_prescription_data['vial_type'], last_prescription_data['treatment_type'])
-            
-            # Get patient MRN for database update
+
+            # Get patient MRN and save updated prescription to database
             mrn = last_prescription_data.get('mrn')
-            if prescription_json and mrn:
+            if mrn:
                 try:
                     conn = sqlite3.connect(DB_FILE)
                     cursor = conn.cursor()
-                    cursor.execute(
-                        "UPDATE patients SET last_prescription_json = ? WHERE mrn = ?",
-                        (prescription_json, mrn)
-                    )
-                    conn.commit()
-                    
-                    # Also update/re-create compounding log
                     cursor.execute("SELECT id FROM patients WHERE mrn = ?", (mrn,))
                     row = cursor.fetchone()
                     if row:
                         patient_id = row[0]
+                        # Save updated prescription to database
+                        save_prescription_to_database(
+                            patient_id,
+                            last_vials,
+                            last_prescription_data['vial_type'],
+                            last_prescription_data['treatment_type']
+                        )
+                        # Update/re-create compounding log
                         create_compounding_log(
-                            patient_id, 
-                            last_prescription_data['patient_name'], 
+                            patient_id,
+                            last_prescription_data['patient_name'],
                             last_prescription_data['dob'],
                             last_prescription_data['vial_type'],
                             last_prescription_data['treatment_type'],
-                            last_vials
+                            last_vials,
+                            expected_mix_date_var.get()
                         )
                     conn.close()
                 except Exception as e:
-                    print(f"Warning: Could not update database: {e}")
-            
+                    print(f"Warning: Could not save prescription: {e}")
+
             show_toast("Prescription updated")
             edit_window.destroy()
-        
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save changes: {e}")
     
@@ -1941,19 +2443,39 @@ def get_dilutions(vial_type, treatment_type):
         return [("Red", "1:1"), ("Yellow", "1:10"), ("Blue", "1:100")]
 
 
+def get_allergen_abbreviation(allergen_name):
+    """Get abbreviation for Other group allergens, or return full name for other groups."""
+    abbreviation_map = {
+        "Cat": "C",
+        "Dog - UF": "D",
+        "Dog - Epithelium": "D",
+        "Mouse": "M",
+        "Rat": "R",
+        "Horse": "H",
+        "Amer. Cockroach": "CR",
+        "Ger. Cockroach": "CR",
+        "Dust Mite Mix": "DM"
+    }
+    return abbreviation_map.get(allergen_name, allergen_name)
+
+
 def export_prescription_to_pdf():
     """Exports the current prescription to a PDF file with signature lines."""
     global last_save_directory
     if not last_prescription_data or not last_vials:
         messagebox.showwarning("Warning", "Please generate a prescription first before exporting.")
         return
-    
+
+    # Determine prescription type prefix (AIT for Environmental, VIT for Venom)
+    vial_type = last_prescription_data.get('vial_type', 'Environmental')
+    prefix = "VIT" if vial_type == "Venom" else "AIT"
+
     # Ask user where to save the file
     file_path = filedialog.asksaveasfilename(
         initialdir=last_save_directory,
         defaultextension=".pdf",
         filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
-        initialfile=f"{last_prescription_data['patient_name'].replace(' ', '_')}_AIT_Prescription.pdf"
+        initialfile=f"{last_prescription_data['patient_name'].replace(' ', '_')}_{prefix}_Prescription.pdf"
     )
     
     if not file_path:
@@ -2059,6 +2581,10 @@ def export_prescription_to_pdf():
             for allergen_name in sorted_allergen_names:
                 volume = vial.allergens[allergen_name]
                 vial_contents.append([allergen_name, f"{volume:.2f} mL"])
+
+            # Check if HSA Diluent exists in vial and use its volume
+            if "HSA Diluent" in vial.allergens:
+                diluent_vol = vial.allergens["HSA Diluent"]
 
             vial_contents.append(["Diluent:", f"{diluent_vol:.2f} mL"])
             
@@ -2215,26 +2741,33 @@ def parse_expiration_date(date_str):
     return None
 
 
-def generate_label_data():
+def generate_label_data(mix_date=None):
     """Generate label data for all vials with their dilutions.
-    
+
+    Args:
+        mix_date: Optional mix date string in format "mm/dd/yyyy". If not provided, uses today's date.
+
     Returns a list of dictionaries with label information.
     For each vial, creates one label per dilution based on treatment type.
     """
     if not last_prescription_data or not last_vials:
         return []
-    
+
     labels = []
     vial_type = last_prescription_data['vial_type']
     treatment_type = last_prescription_data['treatment_type']
     patient_name = last_prescription_data['patient_name']
     dob = last_prescription_data['dob']
-    
+
     # Get dilutions for this prescription
     dilutions = get_dilutions(vial_type, treatment_type)
-    
-    # Get current date and calculate lot number
-    current_date = datetime.datetime.now().strftime('%m-%d-%Y')
+
+    # Get mix date - use provided date or default to today
+    if mix_date:
+        # Convert mm/dd/yyyy to mm-dd-yyyy for consistency
+        current_date = mix_date.replace("/", "-")
+    else:
+        current_date = datetime.datetime.now().strftime('%m-%d-%Y')
     lot_number = calculate_lot_number(dob)
     
     # Get vial expiration dates from database for each vial
@@ -2271,13 +2804,25 @@ def generate_label_data():
     # Get unique allergen groups in each vial
     for vial in last_vials:
         allergen_groups = set()
+        other_group_abbrevs = []
+
         for allergen_name in vial.allergens.keys():
             allergen_data = next((a for a in ALLERGENS if a["name"] == allergen_name), None)
             if allergen_data:
-                allergen_groups.add(allergen_data["group"])
+                group = allergen_data["group"]
+                if group == "Other":
+                    # For Other group, use abbreviations
+                    other_group_abbrevs.append(get_allergen_abbreviation(allergen_name))
+                else:
+                    allergen_groups.add(group)
 
-        # Sort allergen groups by priority
+        # Sort allergen groups by priority and add Other group abbreviations at the end
         sorted_groups = sorted(allergen_groups, key=lambda g: GROUP_ORDER.index(g) if g in GROUP_ORDER else len(GROUP_ORDER))
+
+        # Add abbreviated Other group allergens
+        if other_group_abbrevs:
+            sorted_groups.append(", ".join(sorted(other_group_abbrevs)))
+
         allergen_groups_str = ", ".join(sorted_groups)
         
         # Get expiration for this vial
@@ -2335,14 +2880,18 @@ def generate_label_data():
     return labels
 
 
-def generate_labels_pdf(file_path):
+def generate_labels_pdf(file_path, mix_date=None):
     """Generate a PDF with labels in Avery 45160 format.
 
     Creates a multi-page PDF if needed, with all labels properly positioned
     on Avery 45160 label sheets.
+
+    Args:
+        file_path: Path to save the PDF
+        mix_date: Optional mix date string in format "mm/dd/yyyy"
     """
     try:
-        label_data_list = generate_label_data()
+        label_data_list = generate_label_data(mix_date)
 
         if not label_data_list:
             messagebox.showerror("Error", "No prescription generated. Please generate a prescription first.")
@@ -2466,24 +3015,233 @@ def export_labels():
     if not last_prescription_data or not last_vials:
         messagebox.showerror("Error", "No prescription generated. Please generate a prescription first.")
         return
-    
+
     # Create default filename
     patient_name = last_prescription_data['patient_name'].replace(" ", "_")
     current_date = datetime.datetime.now().strftime("%m%d%Y")
     default_filename = f"Labels_{patient_name}_{current_date}.pdf"
-    
+
     file_path = filedialog.asksaveasfilename(
         initialdir=last_save_directory,
         defaultextension=".pdf",
         filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
         initialfile=default_filename
     )
-    
+
     if file_path:
         last_save_directory = os.path.dirname(file_path)
         CURRENT_CONFIG['last_save_directory'] = last_save_directory
         save_config(CURRENT_CONFIG)
-        generate_labels_pdf(file_path)
+        # Pass expected mix date if one was set
+        mix_date = expected_mix_date_var.get() if expected_mix_date_var else None
+        generate_labels_pdf(file_path, mix_date)
+
+
+def save_prescription_to_database(patient_id, vials, vial_type, treatment_type):
+    """Save the current prescription (vials and volumes) to the database.
+
+    Args:
+        patient_id: ID of the patient
+        vials: List of Vial objects
+        vial_type: Type of vial (Environmental/Venom)
+        treatment_type: Treatment type (New Start/Maintenance)
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=10)
+        cursor = conn.cursor()
+
+        # Get the max_volume from the first vial (all should be the same)
+        max_volume = vials[0].custom_max_volume if vials else 5.0
+
+        # Check if max_volume column exists (for backwards compatibility)
+        cursor.execute("PRAGMA table_info(patient_prescriptions)")
+        columns = [col[1] for col in cursor.fetchall()]
+        has_max_volume = 'max_volume' in columns
+
+        # Check if prescription exists for this patient AND vial type
+        cursor.execute("SELECT id FROM patient_prescriptions WHERE patient_id = ? AND vial_type = ?", (patient_id, vial_type))
+        existing = cursor.fetchone()
+
+        if existing:
+            prescription_id = existing[0]
+            # Update existing prescription
+            if has_max_volume:
+                cursor.execute('''
+                    UPDATE patient_prescriptions
+                    SET treatment_type = ?, max_volume = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (treatment_type, max_volume, prescription_id))
+            else:
+                # Backwards compatibility: don't update max_volume if column doesn't exist
+                cursor.execute('''
+                    UPDATE patient_prescriptions
+                    SET treatment_type = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (treatment_type, prescription_id))
+            # Clear old vial entries
+            cursor.execute("DELETE FROM patient_prescription_vials WHERE prescription_id = ?", (prescription_id,))
+        else:
+            # Create new prescription record
+            if has_max_volume:
+                cursor.execute('''
+                    INSERT INTO patient_prescriptions (patient_id, vial_type, treatment_type, max_volume)
+                    VALUES (?, ?, ?, ?)
+                ''', (patient_id, vial_type, treatment_type, max_volume))
+            else:
+                # Backwards compatibility: don't include max_volume if column doesn't exist
+                cursor.execute('''
+                    INSERT INTO patient_prescriptions (patient_id, vial_type, treatment_type)
+                    VALUES (?, ?, ?)
+                ''', (patient_id, vial_type, treatment_type))
+            prescription_id = cursor.lastrowid
+
+        # Save all vials and their allergens
+        for vial in vials:
+            for allergen_name, volume in vial.allergens.items():
+                cursor.execute('''
+                    INSERT INTO patient_prescription_vials
+                    (prescription_id, vial_letter, allergen_name, volume)
+                    VALUES (?, ?, ?, ?)
+                ''', (prescription_id, vial.label, allergen_name, volume))
+
+        conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Warning: Could not save prescription to database: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+def load_prescription_from_database(patient_id, vial_type):
+    """Load the saved prescription from the database for a patient and vial type.
+
+    Args:
+        patient_id: ID of the patient
+        vial_type: Type of vial to load (Environmental/Venom)
+
+    Returns tuple of (vials, vial_type, treatment_type) or (None, None, None) if not found
+    """
+    conn = None
+    try:
+        print(f"DEBUG: load_prescription - opening DB connection (timeout 15s)")
+        conn = sqlite3.connect(DB_FILE, timeout=15)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        print(f"DEBUG: load_prescription - opened DB_FILE={DB_FILE}")
+
+        # Check if max_volume column exists (for backwards compatibility)
+        cursor.execute("PRAGMA table_info(patient_prescriptions)")
+        columns = [col[1] for col in cursor.fetchall()]
+        has_max_volume = 'max_volume' in columns
+        print(f"DEBUG: load_prescription - max_volume column exists: {has_max_volume}")
+
+        # Get the patient prescription for the specific vial type
+        # Handle backwards compatibility: old records may have vial_type=NULL (treat as Environmental default)
+        if has_max_volume:
+            sql_query = '''
+                SELECT id, vial_type, treatment_type, COALESCE(max_volume, 5.0) as max_volume
+                FROM patient_prescriptions
+                WHERE patient_id = ? AND (vial_type = ? OR (vial_type IS NULL AND ? = 'Environmental'))
+                LIMIT 1
+            '''
+        else:
+            # Backwards compatibility: old schema without max_volume column
+            sql_query = '''
+                SELECT id, vial_type, treatment_type, 5.0 as max_volume
+                FROM patient_prescriptions
+                WHERE patient_id = ? AND (vial_type = ? OR (vial_type IS NULL AND ? = 'Environmental'))
+                LIMIT 1
+            '''
+
+        print(f"DEBUG: load_prescription - executing query with patient_id={patient_id}, vial_type={vial_type}")
+        print(f"DEBUG: load_prescription - SQL query:\n{sql_query}")
+        print(f"DEBUG: load_prescription - query params: ({patient_id}, {vial_type}, {vial_type})")
+        cursor.execute(sql_query, (patient_id, vial_type, vial_type))
+
+        prescription = cursor.fetchone()
+        print(f"DEBUG: load_prescription - query returned: {prescription}")
+
+        # Also check if there are ANY prescriptions for this patient at all
+        cursor.execute("SELECT id, patient_id, vial_type FROM patient_prescriptions WHERE patient_id = ?", (patient_id,))
+        all_prescriptions = cursor.fetchall()
+        print(f"DEBUG: load_prescription - ALL prescriptions for patient_id={patient_id}: {len(all_prescriptions)} records")
+        for pres in all_prescriptions:
+            print(f"  Prescription: id={pres[0]}, patient_id={pres[1]}, vial_type={pres[2]}")
+
+        if not prescription:
+            print(f"DEBUG: No prescription found for patient_id={patient_id}, vial_type={vial_type}")
+            print(f"DEBUG: load_prescription - closing connection (no prescription found)")
+            conn.close()
+            return None, None, None
+
+        prescription_id = prescription['id']
+        vial_type = prescription['vial_type'] or "Environmental"  # Handle NULL vial_type from old records
+        treatment_type = prescription['treatment_type']
+        max_volume = prescription['max_volume']
+        print(f"DEBUG: Found prescription_id={prescription_id}, vial_type={vial_type}, treatment_type={treatment_type}")
+
+        # Get all vial data
+        cursor.execute('''
+            SELECT vial_letter, allergen_name, volume
+            FROM patient_prescription_vials
+            WHERE prescription_id = ?
+            ORDER BY vial_letter, allergen_name
+        ''', (prescription_id,))
+        items = cursor.fetchall()
+        print(f"DEBUG: Found {len(items)} vial items for prescription_id={prescription_id}")
+
+        # Reconstruct vials (include all allergens and diluent)
+        vials_dict = {}
+        diluent_dict = {}
+        for item in items:
+            allergen_name = item['allergen_name']
+            vial_letter = item['vial_letter']
+            volume = item['volume']
+
+            if allergen_name == "HSA Diluent":
+                # Store diluent separately to add after calculating remaining volume
+                if vial_letter not in diluent_dict:
+                    diluent_dict[vial_letter] = volume
+            else:
+                if vial_letter not in vials_dict:
+                    vials_dict[vial_letter] = {}
+                vials_dict[vial_letter][allergen_name] = volume
+
+        # Create Vial objects with custom max volume
+        vials = []
+        for vial_letter in sorted(vials_dict.keys()):
+            vial = Vial(vial_letter)
+            vial.custom_max_volume = max_volume  # Set the custom max volume for this vial
+            for allergen_name, volume in vials_dict[vial_letter].items():
+                vial.allergens[allergen_name] = volume
+                vial.current_volume += volume
+
+            # Add the diluent if it exists for this vial
+            if vial_letter in diluent_dict:
+                vial.allergens["HSA Diluent"] = diluent_dict[vial_letter]
+                vial.current_volume += diluent_dict[vial_letter]
+            else:
+                # Calculate diluent as remaining volume to custom max volume
+                remaining = max_volume - vial.current_volume
+                if remaining > 0:
+                    vial.allergens["HSA Diluent"] = remaining
+                    vial.current_volume = max_volume
+
+            vials.append(vial)
+
+        print(f"DEBUG: load_prescription - successfully loaded {len(vials)} vials, closing connection")
+        return vials, vial_type, treatment_type
+    except Exception as e:
+        print(f"Warning: Could not load prescription from database: {e}")
+        return None, None, None
+    finally:
+        if conn:
+            print(f"DEBUG: load_prescription - finally block: closing connection")
+            conn.close()
+            print(f"DEBUG: load_prescription - connection closed in finally")
 
 
 def get_stock_for_allergen(allergen_name, require_active=False):
@@ -2514,20 +3272,48 @@ def get_stock_for_allergen(allergen_name, require_active=False):
         return None
 
 
-def create_compounding_log(patient_id, patient_name, dob, vial_type, treatment_type, vials):
+def create_compounding_log_with_retry(patient_id, patient_name, dob, vial_type, treatment_type, vials, mix_date=None):
+    """Wrapper that retries create_compounding_log if database is locked."""
+    import time
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return create_compounding_log(patient_id, patient_name, dob, vial_type, treatment_type, vials, mix_date)
+        except Exception as e:
+            if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                print(f"DEBUG: Database locked, retrying in 0.5s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(0.5)
+            else:
+                print(f"DEBUG: Could not create compounding log: {e}")
+                return None
+    return None
+
+
+def create_compounding_log(patient_id, patient_name, dob, vial_type, treatment_type, vials, mix_date=None):
     """Create a compounding log record for the generated prescription.
-    
+
+    Args:
+        mix_date: Optional mix date string in format "mm/dd/yyyy". If not provided, uses today's date.
+
     Returns the compounding log ID.
     """
+    global last_compounding_log_id
+    conn = None
+
     try:
-        global last_compounding_log_id
-        
-        current_date = datetime.datetime.now().strftime("%m-%d-%Y")
+        # Use provided mix date or default to today
+        if mix_date:
+            # Convert mm/dd/yyyy to mm-dd-yyyy for consistency
+            current_date = mix_date.replace("/", "-")
+        else:
+            current_date = datetime.datetime.now().strftime("%m-%d-%Y")
+
         lot_number = calculate_lot_number(dob)
-        
-        conn = sqlite3.connect(DB_FILE)
+
+        print(f"DEBUG: create_compounding_log - opening DB connection")
+        conn = sqlite3.connect(DB_FILE, timeout=15)
         cursor = conn.cursor()
-        
+
         # Check if log already exists for this lot
         cursor.execute("SELECT id FROM compounding_logs WHERE lot_number = ?", (lot_number,))
         existing = cursor.fetchone()
@@ -2542,16 +3328,16 @@ def create_compounding_log(patient_id, patient_name, dob, vial_type, treatment_t
         else:
             # Create new compounding log
             cursor.execute('''
-                INSERT INTO compounding_logs 
+                INSERT INTO compounding_logs
                 (patient_id, patient_name, dob, vial_type, treatment_type, mix_date, lot_number)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (patient_id, patient_name, dob, vial_type, treatment_type, current_date, lot_number))
             compounding_log_id = cursor.lastrowid
 
-        # Add items for each vial and allergen
+        # Add items for each vial and allergen (including HSA Diluent)
         for vial in vials:
-            # Sort allergens by group priority
-            sorted_allergen_names = sort_allergens_by_group(list(vial.allergens.keys()))
+            # Sort allergens by group priority (include diluent)
+            sorted_allergen_names = sort_allergens_by_group([name for name in vial.allergens.keys()])
             for allergen_name in sorted_allergen_names:
                 volume_used = vial.allergens[allergen_name]
                 stock = get_stock_for_allergen(allergen_name, require_active=True)
@@ -2573,22 +3359,88 @@ def create_compounding_log(patient_id, patient_name, dob, vial_type, treatment_t
                     stock.get('lot_number', '') if stock else '',
                     stock.get('expiration_date', '') if stock else ''
                 ))
-        
+
+        # Add dilution vials based on treatment type
+        dilution_vials_to_add = [("Red Top - empty 5 mL", "Red Top - Empty")]  # (full_name, short_name)
+        if treatment_type == "New Start":  # Build-up option
+            dilution_vials_to_add.extend([
+                ("Normal Saline with Human Serum Albumin - Yellow Top", "Yellow Top w/ HSA"),
+                ("Normal Saline with Human Serum Albumin - Blue Top", "Blue Top w/ HSA"),
+                ("Normal Saline with Human Serum Albumin - Green Top", "Green Top w/ HSA"),
+                ("Normal Saline with Human Serum Albumin - Silver Top", "Silver Top w/ HSA")
+            ])
+
+        # Calculate quantity of dilution vials needed (one per vial being compounded)
+        num_vials = len(vials)
+
+        # Insert dilution vial items into compounding log
+        for full_name, short_name in dilution_vials_to_add:
+            stock = get_stock_for_allergen(full_name, require_active=True)
+            if not stock:
+                # Try to find in stock_extracts table even if not tagged as allergen
+                try:
+                    conn2 = sqlite3.connect(DB_FILE)
+                    conn2.row_factory = sqlite3.Row
+                    cursor2 = conn2.cursor()
+                    cursor2.execute("SELECT * FROM stock_extracts WHERE allergen_name = ? ORDER BY is_active DESC, created_at DESC LIMIT 1", (full_name,))
+                    stock_row = cursor2.fetchone()
+                    stock = dict(stock_row) if stock_row else None
+                    conn2.close()
+                except:
+                    stock = None
+
+            if stock:
+                cursor.execute('''
+                    INSERT INTO compounding_log_items
+                    (compounding_log_id, vial_letter, allergen_name, volume_used, stock_extract_id,
+                     concentration, manufacturer_item, lot_number, expiration_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    compounding_log_id,
+                    "Empty Vials Used",
+                    short_name,
+                    float(num_vials),
+                    stock.get('id') if isinstance(stock, dict) else stock['id'],
+                    stock.get('concentration', '') if isinstance(stock, dict) else stock.get('concentration', ''),
+                    stock.get('manufacturer_item', '') if isinstance(stock, dict) else stock.get('manufacturer_item', ''),
+                    stock.get('lot_number', '') if isinstance(stock, dict) else stock.get('lot_number', ''),
+                    stock.get('expiration_date', '') if isinstance(stock, dict) else stock.get('expiration_date', '')
+                ))
+
         conn.commit()
-        conn.close()
-        
+        print(f"DEBUG: create_compounding_log - closing DB connection")
+
         last_compounding_log_id = compounding_log_id
         return compounding_log_id
-    
+
     except Exception as e:
+        print(f"Error: Failed to create compounding log: {e}")
         messagebox.showerror("Error", f"Failed to create compounding log: {e}")
         return None
+    finally:
+        if conn:
+            print(f"DEBUG: create_compounding_log - finally block: closing connection")
+            conn.close()
+            print(f"DEBUG: create_compounding_log - connection closed")
 
 
 def export_compounding_log_pdf():
     """Export the compounding log to a PDF file."""
     global last_compounding_log_id
-    
+
+    # If no compounding log exists but we have a loaded prescription, create one on-demand
+    if not last_compounding_log_id and last_prescription_data and last_vials:
+        print("DEBUG: export_compounding_log_pdf - creating compounding log on-demand")
+        last_compounding_log_id = create_compounding_log_with_retry(
+            last_prescription_data.get('patient_id', ''),
+            last_prescription_data.get('patient_name', ''),
+            last_prescription_data.get('dob', ''),
+            last_prescription_data.get('vial_type', 'Environmental'),
+            last_prescription_data.get('treatment_type', 'New Start'),
+            last_vials,
+            expected_mix_date_var.get() if expected_mix_date_var else None
+        )
+
     if not last_compounding_log_id:
         messagebox.showerror("Error", "No compounding log generated. Please generate a prescription first.")
         return
@@ -2719,25 +3571,71 @@ def export_compounding_log_pdf():
             # Create table for each vial
             for vial_letter in sorted(items_by_vial.keys()):
                 vial_items = items_by_vial[vial_letter]
-                
-                # Calculate vial expiration date using helper function
-                vial_expiration_str = calculate_vial_expiration(log['mix_date'], vial_items)
-                
-                vial_heading = Paragraph(f"<b>Vial {vial_letter}</b> (Mixed: {log['mix_date']} | Expires: {vial_expiration_str})", heading_style)
+
+                # Use appropriate heading based on vial letter
+                if vial_letter == "Empty Vials Used":
+                    vial_heading = Paragraph(f"<b>{vial_letter}</b>", heading_style)
+                else:
+                    # Get stock data for this vial to ensure we have actual expiration dates
+                    vial_expiration_str = "TBD"
+                    try:
+                        stock_items = []
+                        for item in vial_items:
+                            if item['stock_extract_id']:
+                                # Look up stock extract to get actual expiration date
+                                conn_exp = sqlite3.connect(DB_FILE)
+                                conn_exp.row_factory = sqlite3.Row
+                                cursor_exp = conn_exp.cursor()
+                                cursor_exp.execute(
+                                    "SELECT expiration_date FROM stock_extracts WHERE id = ?",
+                                    (item['stock_extract_id'],)
+                                )
+                                stock_row = cursor_exp.fetchone()
+                                conn_exp.close()
+                                if stock_row and stock_row['expiration_date']:
+                                    stock_items.append({'expiration_date': stock_row['expiration_date']})
+
+                        # If we found stock items with expiration dates, calculate properly
+                        if stock_items:
+                            vial_expiration_str = calculate_vial_expiration(log['mix_date'], stock_items)
+                        else:
+                            # Fallback: try to calculate from items already loaded
+                            vial_expiration_str = calculate_vial_expiration(log['mix_date'], vial_items)
+                    except Exception as e:
+                        print(f"Warning: Could not retrieve stock expiration for vial {vial_letter}: {e}")
+                        vial_expiration_str = calculate_vial_expiration(log['mix_date'], vial_items)
+
+                    vial_heading = Paragraph(f"<b>{vial_letter}</b> (Mixed: {log['mix_date']} | Expires: {vial_expiration_str})", heading_style)
                 story.append(vial_heading)
-                
-                vial_data = [['Allergen', 'Volume', 'Concentration', 'Manuf. Item #', 'Lot #', 'Expiration']]
-                
+
+                # Add Qty column for dilution vials, omit for allergens
+                if vial_letter == "Empty Vials Used":
+                    vial_data = [['Item', 'Qty', 'Concentration', 'Manuf. Item #', 'Lot #', 'Expiration']]
+                else:
+                    vial_data = [['Allergen', 'Volume', 'Concentration', 'Manuf. Item #', 'Lot #', 'Expiration']]
+
                 for item in vial_items:
-                    vial_data.append([
-                        item['allergen_name'],
-                        f"{item['volume_used']:.2f} mL",
-                        item['concentration'] or '-',
-                        item['manufacturer_item'] or '-',
-                        item['lot_number'] or '-',
-                        item['expiration_date'] or '-'
-                    ])
-                
+                    if vial_letter == "Empty Vials Used":
+                        # For dilution vials, show quantity instead of volume with mL
+                        vial_data.append([
+                            item['allergen_name'],
+                            f"{int(item['volume_used'])}",
+                            item['concentration'] or '-',
+                            item['manufacturer_item'] or '-',
+                            item['lot_number'] or '-',
+                            item['expiration_date'] or '-'
+                        ])
+                    else:
+                        # For allergens, show volume with mL
+                        vial_data.append([
+                            item['allergen_name'],
+                            f"{item['volume_used']:.2f} mL",
+                            item['concentration'] or '-',
+                            item['manufacturer_item'] or '-',
+                            item['lot_number'] or '-',
+                            item['expiration_date'] or '-'
+                        ])
+
                 vial_table = Table(vial_data, colWidths=[1.0*inch, 0.8*inch, 1.0*inch, 1.0*inch, 0.8*inch, 0.8*inch])
                 vial_table.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0d5bba')),
@@ -2755,12 +3653,14 @@ def export_compounding_log_pdf():
                 story.append(Spacer(1, 0.04*inch))
             
             story.append(Spacer(1, 0.1*inch))
-            
+
             # Quality control and signatures
             qc_heading = Paragraph("<b>Quality Control & Verification</b>", heading_style)
             story.append(qc_heading)
-            
-            qc_text = "Final Yield per vial: 5 mL<br/>Quality Control Procedures: Color top confirmed; no particulates."
+
+            # Get vial size from last_vials if available
+            vial_size = last_vials[0].custom_max_volume if last_vials else 5.0
+            qc_text = f"Final Yield per vial: {vial_size:.1f} mL<br/>Quality Control Procedures: Color top confirmed; no particulates."
             story.append(Paragraph(qc_text, normal_style))
             story.append(Spacer(1, 0.08*inch))
             
@@ -2817,7 +3717,8 @@ def show_stock_edit_dialog(stock_id=None, parent_window=None):
         edit_window = tk.Toplevel(root)
         edit_window.title("Add Stock Entry" if stock_id is None else "Edit Stock Entry")
         edit_window.geometry("500x450")
-        
+        center_window(edit_window, root)
+
         # Get allergen names for dropdown
         allergen_names = get_stock_allergen_names()
         
@@ -2968,6 +3869,7 @@ def show_staff_edit_dialog(staff_id=None, parent_window=None):
         edit_window = tk.Toplevel(root)
         edit_window.title("Add Staff Member" if staff_id is None else "Edit Staff Member")
         edit_window.geometry("400x200")
+        center_window(edit_window, root)
 
         # Get current data if editing
         current_data = {}
@@ -3061,6 +3963,11 @@ def show_inventory_and_staff():
         main_window = tk.Toplevel(root)
         main_window.title("Inventory & Staff Management")
         main_window.geometry("1200x650")
+        center_window(main_window, root)
+
+        # Prevent duplicate windows
+        if not register_window("inventory_and_staff", main_window):
+            return
 
         # Create notebook (tabbed interface)
         notebook = ttk.Notebook(main_window)
@@ -3070,28 +3977,31 @@ def show_inventory_and_staff():
         inventory_tab = ttk.Frame(notebook)
         notebook.add(inventory_tab, text="📦 Inventory")
 
-        def fetch_stocks(filter_allergen=None):
+        def fetch_stocks(filter_allergen=None, filter_group=None):
             conn = sqlite3.connect(DB_FILE)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            if filter_allergen and filter_allergen != "All":
-                cursor.execute('''
-                    SELECT id, allergen_name, concentration, manufacturer_item, lot_number,
-                           expiration_date, vial_amount, is_active
-                    FROM stock_extracts
-                    WHERE allergen_name = ?
-                    ORDER BY allergen_name, is_active DESC, expiration_date ASC
-                ''', (filter_allergen,))
-            else:
-                cursor.execute('''
-                    SELECT id, allergen_name, concentration, manufacturer_item, lot_number,
-                           expiration_date, vial_amount, is_active
-                    FROM stock_extracts
-                    ORDER BY allergen_name, is_active DESC, expiration_date ASC
-                ''')
-            stocks = cursor.fetchall()
+
+            # Get all stocks first
+            cursor.execute('''
+                SELECT id, allergen_name, concentration, manufacturer_item, lot_number,
+                       expiration_date, vial_amount, is_active
+                FROM stock_extracts
+                ORDER BY allergen_name, is_active DESC, expiration_date ASC
+            ''')
+            all_stocks = cursor.fetchall()
             conn.close()
-            return stocks
+
+            # Filter by group (using ALLERGENS data)
+            if filter_group and filter_group != "All":
+                allergen_map = {a["name"]: a["group"] for a in ALLERGENS}
+                all_stocks = [s for s in all_stocks if allergen_map.get(s['allergen_name']) == filter_group]
+
+            # Filter by allergen name
+            if filter_allergen and filter_allergen != "All":
+                all_stocks = [s for s in all_stocks if s['allergen_name'] == filter_allergen]
+
+            return all_stocks
 
         def fetch_allergen_options():
             conn = sqlite3.connect(DB_FILE)
@@ -3101,9 +4011,32 @@ def show_inventory_and_staff():
             conn.close()
             return ["All"] + names
 
+        def fetch_group_options():
+            """Get unique groups from ALLERGENS that have stock items."""
+            allergen_map = {a["name"]: a["group"] for a in ALLERGENS}
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute('SELECT DISTINCT allergen_name FROM stock_extracts')
+            allergen_names = [row[0] for row in cursor.fetchall()]
+            conn.close()
+
+            groups = set()
+            for allergen_name in allergen_names:
+                group = allergen_map.get(allergen_name)
+                if group:
+                    groups.add(group)
+
+            return ["All"] + sorted(groups)
+
         # Filter controls
         filter_frame = ttk.Frame(inventory_tab)
         filter_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
+
+        ttk.Label(filter_frame, text="Filter by Type:").pack(side=tk.LEFT, padx=(0, 5))
+        type_filter_var = tk.StringVar(value="All")
+        type_filter_combo = ttk.Combobox(filter_frame, textvariable=type_filter_var,
+                             values=fetch_group_options(), state='readonly', width=15)
+        type_filter_combo.pack(side=tk.LEFT, padx=(0, 15))
 
         ttk.Label(filter_frame, text="Filter by Allergen:").pack(side=tk.LEFT)
         allergen_filter_var = tk.StringVar(value="All")
@@ -3192,6 +4125,17 @@ def show_inventory_and_staff():
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         tree.configure(yscroll=scrollbar.set)
 
+        # Bind mousewheel events for scrolling
+        def _on_tree_mousewheel(event):
+            if event.num == 4 or event.delta > 0:
+                tree.yview_scroll(-3, "units")
+            elif event.num == 5 or event.delta < 0:
+                tree.yview_scroll(3, "units")
+
+        tree.bind("<MouseWheel>", _on_tree_mousewheel)
+        tree.bind("<Button-4>", _on_tree_mousewheel)
+        tree.bind("<Button-5>", _on_tree_mousewheel)
+
         tree.tag_configure('allergen_light', background='#ffffff')
         tree.tag_configure('allergen_dark', background='#f0f2f5')
         tree.tag_configure('expiring_soon', background='#fff3b0')
@@ -3204,12 +4148,12 @@ def show_inventory_and_staff():
             cutoff = today + datetime.timedelta(days=365)
             return exp_date <= cutoff
 
-        def populate_tree(filter_allergen=None):
+        def populate_tree(filter_allergen=None, filter_group=None):
             for row_id in tree.get_children():
                 tree.delete(row_id)
             current_tag = 'allergen_light'
             last_allergen = None
-            for stock in fetch_stocks(filter_allergen):
+            for stock in fetch_stocks(filter_allergen, filter_group):
                 if last_allergen is None:
                     last_allergen = stock['allergen_name']
                 elif stock['allergen_name'] != last_allergen:
@@ -3242,8 +4186,9 @@ def show_inventory_and_staff():
             main_window.after(5000, refresh_expiring_highlights)
 
         def apply_filter(*args):
-            populate_tree(allergen_filter_var.get())
+            populate_tree(allergen_filter_var.get(), type_filter_var.get())
 
+        type_filter_combo.bind("<<ComboboxSelected>>", apply_filter)
         allergen_filter_combo.bind("<<ComboboxSelected>>", apply_filter)
         populate_tree()
         refresh_expiring_highlights()
@@ -3377,6 +4322,17 @@ def show_inventory_and_staff():
         staff_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         staff_tree.configure(yscroll=staff_scrollbar.set)
 
+        # Bind mousewheel events for scrolling
+        def _on_staff_tree_mousewheel(event):
+            if event.num == 4 or event.delta > 0:
+                staff_tree.yview_scroll(-3, "units")
+            elif event.num == 5 or event.delta < 0:
+                staff_tree.yview_scroll(3, "units")
+
+        staff_tree.bind("<MouseWheel>", _on_staff_tree_mousewheel)
+        staff_tree.bind("<Button-4>", _on_staff_tree_mousewheel)
+        staff_tree.bind("<Button-5>", _on_staff_tree_mousewheel)
+
         def populate_staff_tree():
             for item in staff_tree.get_children():
                 staff_tree.delete(item)
@@ -3462,26 +4418,87 @@ def import_stock_csv_dialog():
 
 
 def update_allergen_options(*args):
-    """Updates the visible allergen checkboxes based on vial type."""
+    """Updates the visible allergen checkboxes based on vial type and loads the prescription for that type."""
+    global last_vials, last_prescription_data, last_compounding_log_id, prescription_generated
     mode = vial_type_var.get()
+    print(f"DEBUG: update_allergen_options called, switching to: {mode}")
 
     if mode == "Environmental":
-        for widget in venom_allergen_frame.winfo_children():
-            widget.grid_remove()
+        for frame in venom_allergen_frames:
+            frame.grid_remove()
         for frame in environmental_allergen_frames:
             frame.grid()
 
     elif mode == "Venom":
         for frame in environmental_allergen_frames:
             frame.grid_remove()
-        for i, allergen in enumerate(venom_allergens):
-            venom_allergen_checkboxes[i].grid()
+        for frame in venom_allergen_frames:
+            frame.grid()
 
     else:
         for frame in environmental_allergen_frames:
             frame.grid_remove()
-        for widget in venom_allergen_frame.winfo_children():
-            widget.grid_remove()
+        for frame in venom_allergen_frames:
+            frame.grid_remove()
+
+    # Load prescription for the newly selected vial_type if a patient is loaded
+    print(f"DEBUG: last_prescription_data exists: {bool(last_prescription_data)}, has MRN: {bool(last_prescription_data and last_prescription_data.get('mrn'))}")
+    if last_prescription_data and last_prescription_data.get('mrn'):
+        conn = None
+        try:
+            print(f"DEBUG: update_allergen_options - opening DB connection")
+            conn = sqlite3.connect(DB_FILE, timeout=15)
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM patients WHERE mrn = ?", (last_prescription_data['mrn'],))
+            result = cursor.fetchone()
+
+            if result:
+                patient_id = result[0]
+                vials, loaded_vial_type, loaded_treatment_type = load_prescription_from_database(patient_id, mode)
+                print(f"DEBUG: Loaded prescription for {mode}: vials={len(vials) if vials else 0}, type={loaded_vial_type}")
+
+                if vials:
+                    last_vials = vials
+                    last_prescription_data['vial_type'] = loaded_vial_type
+                    last_prescription_data['treatment_type'] = loaded_treatment_type
+
+                    # Update treatment type dropdown
+                    if treatment_type_var:
+                        treatment_type_var.set(loaded_treatment_type or "New Start")
+
+                    # Update allergen checkboxes based on loaded vials
+                    # Clear all checkboxes first
+                    for var in environmental_allergen_vars.values():
+                        var.set(False)
+                    for var in venom_allergen_vars.values():
+                        var.set(False)
+
+                    # Check boxes for allergens in loaded vials
+                    for vial in vials:
+                        for allergen_name in vial.allergens.keys():
+                            if allergen_name != "HSA Diluent":
+                                if allergen_name in environmental_allergen_vars:
+                                    environmental_allergen_vars[allergen_name].set(True)
+                                elif allergen_name in venom_allergen_vars:
+                                    venom_allergen_vars[allergen_name].set(True)
+
+
+                    # TODO: Don't create compounding log during load/switch - create on-demand when printing
+                    # if patient_id:
+                    #     last_compounding_log_id = create_compounding_log_with_retry(...)
+
+                    # Display the loaded prescription
+                    display_prescription_output(last_vials, last_prescription_data, loaded_vial_type)
+                    prescription_generated = True
+                # If no prescription found, don't clear last_vials - user may want to generate a new one
+        except Exception as e:
+            print(f"Warning: Could not load prescription for {mode}: {e}")
+        finally:
+            if conn:
+                print(f"DEBUG: update_allergen_options - closing DB connection")
+                conn.close()
+                print(f"DEBUG: update_allergen_options - connection closed")
+
 
 
 def on_selection_changed(*args):
@@ -3504,12 +4521,12 @@ def save_current_patient():
         return
 
     try:
-        dob = dob_entry.get_date()
-        address = address_entry.get()
-        city = city_entry.get()
-        state = state_entry.get()
-        zip_code = zip_entry.get()
-        phone = phone_entry.get()
+        dob = normalize_two_digit_year(dob_entry.get_date())
+        address = address_entry.get().strip()
+        city = city_entry.get().strip()
+        state = state_entry.get().strip()
+        zip_code = zip_entry.get().strip()
+        phone = phone_entry.get().strip()
         treatment_type = treatment_type_var.get()
 
         # Get selected allergens
@@ -3555,12 +4572,12 @@ def new_patient():
     # Only save if patient has name and MRN
     if patient_name and mrn:
         try:
-            dob = dob_entry.get_date()
-            address = address_entry.get()
-            city = city_entry.get()
-            state = state_entry.get()
-            zip_code = zip_entry.get()
-            phone = phone_entry.get()
+            dob = normalize_two_digit_year(dob_entry.get_date())
+            address = address_entry.get().strip()
+            city = city_entry.get().strip()
+            state = state_entry.get().strip()
+            zip_code = zip_entry.get().strip()
+            phone = phone_entry.get().strip()
             treatment_type = treatment_type_var.get()
 
             # Get selected allergens
@@ -3607,7 +4624,9 @@ def clear_fields():
     mrn_entry.delete(0, tk.END)
     address_entry.delete(0, tk.END)
     city_entry.delete(0, tk.END)
+    city_entry.insert(0, "Cincinnati")  # Auto-populate city
     state_entry.delete(0, tk.END)
+    state_entry.insert(0, "OH")  # Auto-populate state
     zip_entry.delete(0, tk.END)
     phone_entry.delete(0, tk.END)
     # Uncheck all checkboxes
@@ -3621,9 +4640,277 @@ def clear_fields():
         allow_fourth_vial_var.set(False)
     result_label.config(text="", fg=TEXT_COLOR)  # Clear result label
     prescription_generated = False
+    # Scroll left canvas to top for easier demographics entry
+    left_canvas.yview_moveto(0)
 
 
-# --- Main Application Window ---
+def cleanup_old_backups():
+    """Delete backup databases older than 6 months."""
+    try:
+        from pathlib import Path
+        import datetime
+        import os
+
+        db_path = Path(DB_FILE)
+        backup_dir = db_path.parent / "backups"
+
+        if not backup_dir.exists():
+            return
+
+        # Calculate cutoff date (6 months ago)
+        cutoff_date = datetime.datetime.now() - datetime.timedelta(days=180)
+
+        deleted_count = 0
+        for backup_file in backup_dir.glob("*.db"):
+            # Get file modification time
+            file_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(backup_file))
+
+            if file_mtime < cutoff_date:
+                try:
+                    backup_file.unlink()
+                    deleted_count += 1
+                    print(f"Deleted old backup: {backup_file.name}")
+                except Exception as e:
+                    print(f"Warning: Could not delete backup {backup_file.name}: {e}")
+
+        if deleted_count > 0:
+            print(f"Cleanup: Deleted {deleted_count} backup(s) older than 6 months")
+
+    except Exception as e:
+        print(f"Warning: Could not cleanup old backups: {e}")
+
+
+def backup_database():
+    """Create a timestamped backup of the database in a 'backups' folder."""
+    try:
+        db_path = Path(DB_FILE)
+        backup_dir = db_path.parent / "backups"
+
+        # Create backups folder if it doesn't exist
+        backup_dir.mkdir(exist_ok=True)
+
+        # Generate timestamp for backup filename
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"{db_path.stem}_backup_{timestamp}.db"
+        backup_path = backup_dir / backup_filename
+
+        # Copy database file to backup location
+        import shutil
+        shutil.copy2(str(db_path), str(backup_path))
+        print(f"Database backed up to: {backup_path}")
+    except Exception as e:
+        print(f"Warning: Could not create database backup: {e}")
+
+
+def on_closing():
+    """Handle application closing - backup database and exit."""
+    try:
+        backup_database()
+    except Exception as e:
+        print(f"Backup error: {e}")
+    finally:
+        root.destroy()
+
+
+def find_and_show_duplicates():
+    """Find duplicate patients and show in a dialog for merging."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+
+        # Find patients with same normalized MRN and name
+        cursor.execute("""
+            SELECT id, patient_name, mrn FROM patients
+            ORDER BY patient_name, mrn
+        """)
+        all_patients = cursor.fetchall()
+        conn.close()
+
+        # Group by normalized MRN and name
+        duplicates = {}
+        for patient_id, name, mrn in all_patients:
+            normalized_key = (name.strip().lower(), mrn.strip().lower())
+            if normalized_key not in duplicates:
+                duplicates[normalized_key] = []
+            duplicates[normalized_key].append((patient_id, name, mrn))
+
+        # Find groups with more than one patient
+        duplicate_groups = {k: v for k, v in duplicates.items() if len(v) > 1}
+
+        if not duplicate_groups:
+            messagebox.showinfo("No Duplicates", "No duplicate patients found in the database.")
+            return
+
+        # Show duplicates in a new window
+        dup_window = tk.Toplevel(root)
+        dup_window.title("Duplicate Patients Found")
+        dup_window.geometry("700x550")
+
+        tk.Label(dup_window, text=f"Found {len(duplicate_groups)} duplicate groups:", font=("Arial", 12, "bold")).pack(pady=10)
+
+        frame = ttk.Frame(dup_window)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        canvas = tk.Canvas(frame, bg="white")
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Display each duplicate group
+        for (norm_name, norm_mrn), patients in duplicate_groups.items():
+            group_frame = ttk.LabelFrame(scrollable_frame, text=f"Group: {patients[0][1]} (MRN variations)", padding=10)
+            group_frame.pack(fill=tk.X, padx=5, pady=5)
+
+            for patient_id, name, mrn in patients:
+                record_text = f"ID {patient_id}: {name} | MRN: {mrn}"
+                record_frame = ttk.Frame(group_frame)
+                record_frame.pack(fill=tk.X, pady=3)
+
+                tk.Label(record_frame, text=record_text, font=("Arial", 10)).pack(side=tk.LEFT, expand=True, anchor="w")
+
+                # Create merge button
+                def make_merge_callback(keep_id, delete_id, delete_name):
+                    def merge_callback():
+                        if merge_patient_records(keep_id, delete_id):
+                            dup_window.destroy()
+                            messagebox.showinfo("Success", f"Merged and deleted duplicate. Kept patient record for {delete_name}.")
+                            # Refresh the patient list
+                            load_patient_list()
+                    return merge_callback
+
+                # For each patient, offer to merge with the first one
+                if patient_id != patients[0][0]:
+                    merge_btn = ttk.Button(
+                        record_frame,
+                        text="Delete This (Keep First)",
+                        command=make_merge_callback(patients[0][0], patient_id, patients[0][1])
+                    )
+                    merge_btn.pack(side=tk.RIGHT, padx=5)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Button frame at bottom
+        button_frame = ttk.Frame(dup_window)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        def merge_all_smart():
+            """Merge all duplicates, keeping the patient with prescriptions."""
+            try:
+                merged_count = 0
+                for (norm_name, norm_mrn), patients in duplicate_groups.items():
+                    # Find which patient has prescriptions
+                    keep_id = None
+                    for patient_id, _, _ in patients:
+                        if patient_has_prescriptions(patient_id):
+                            keep_id = patient_id
+                            break
+
+                    # If no patient has prescriptions, keep the first (lowest ID)
+                    if keep_id is None:
+                        keep_id = min(p[0] for p in patients)
+
+                    # Merge all others into keep_id
+                    for patient_id, patient_name, _ in patients:
+                        if patient_id != keep_id:
+                            if merge_patient_records(keep_id, patient_id, show_confirmation=False):
+                                merged_count += 1
+
+                dup_window.destroy()
+                messagebox.showinfo("Merge Complete", f"Successfully merged {merged_count} duplicate records.")
+                load_patient_list()
+            except Exception as e:
+                messagebox.showerror("Merge Error", f"Error merging duplicates: {e}")
+
+        merge_all_btn = ttk.Button(button_frame, text="Merge All Duplicates", command=merge_all_smart)
+        merge_all_btn.pack(side=tk.LEFT, padx=5)
+
+        # Add info label
+        info_text = "Use 'Merge All Duplicates' to automatically merge all groups (keeps record with prescriptions). Or manually delete duplicates below."
+        tk.Label(dup_window, text=info_text, font=("Arial", 9), wraplength=650, justify=tk.LEFT, fg="#555555").pack(padx=10, pady=10)
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Could not find duplicates: {e}")
+
+
+def patient_has_prescriptions(patient_id):
+    """Check if a patient has any saved prescriptions."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM patient_prescriptions WHERE patient_id = ?", (patient_id,))
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count > 0
+    except Exception:
+        return False
+
+
+def merge_patient_records(keep_id, delete_id, show_confirmation=True):
+    """Merge two patient records, keeping keep_id and deleting delete_id.
+
+    Transfers all prescriptions and compounding logs from delete_id to keep_id.
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+
+        # First, get the name of the patient being deleted (for confirmation)
+        cursor.execute("SELECT patient_name FROM patients WHERE id = ?", (delete_id,))
+        result = cursor.fetchone()
+        delete_name = result[0] if result else "Unknown"
+
+        # Confirm the merge with user (unless auto-merging)
+        if show_confirmation:
+            confirm = messagebox.askyesno(
+                "Confirm Merge",
+                f"Keep: ID {keep_id}\nDelete: ID {delete_id} ({delete_name})\n\n"
+                f"This will:\n"
+                f"- Transfer all prescriptions to the kept record\n"
+                f"- Transfer all compounding logs to the kept record\n"
+                f"- Permanently delete the duplicate patient record\n\n"
+                f"This action cannot be undone!"
+            )
+        else:
+            confirm = True
+
+        if not confirm:
+            return False
+
+        # Transfer patient_prescriptions
+        cursor.execute("""
+            UPDATE patient_prescriptions
+            SET patient_id = ?
+            WHERE patient_id = ?
+        """, (keep_id, delete_id))
+
+        # Transfer compounding_logs
+        cursor.execute("""
+            UPDATE compounding_logs
+            SET patient_id = ?
+            WHERE patient_id = ?
+        """, (keep_id, delete_id))
+
+        # Delete the duplicate patient record
+        cursor.execute("DELETE FROM patients WHERE id = ?", (delete_id,))
+
+        conn.commit()
+        conn.close()
+
+        print(f"Successfully merged patient {delete_id} into {keep_id}")
+        return True
+
+    except Exception as e:
+        messagebox.showerror("Merge Error", f"Could not merge patients: {e}")
+        return False
+
 # Check for first launch and get database location if needed
 handle_first_launch()
 
@@ -3640,13 +4927,21 @@ root.config(menu=menubar)
 
 file_menu = tk.Menu(menubar, tearoff=0)
 menubar.add_cascade(label="File", menu=file_menu)
-file_menu.add_command(label="Save", command=save_current_patient)
-file_menu.add_command(label="New Patient", command=new_patient)
+file_menu.add_command(label="Save", command=save_current_patient, accelerator="Alt+S")
+file_menu.add_command(label="New Patient", command=new_patient, accelerator="Alt+X")
 file_menu.add_separator()
-file_menu.add_command(label="Settings", command=open_settings)
-file_menu.add_command(label="Dose Ranges", command=open_dose_ranges_window)
+file_menu.add_command(label="Find Duplicates", command=find_and_show_duplicates)
+file_menu.add_separator()
+file_menu.add_command(label="Settings", command=open_settings, accelerator="Alt+E")
+file_menu.add_command(label="Dose Ranges", command=open_dose_ranges_window, accelerator="Alt+D")
 file_menu.add_separator()
 file_menu.add_command(label="Exit", command=root.quit)
+
+# Bind keyboard shortcuts
+root.bind("<Alt-s>", lambda e: save_current_patient())
+root.bind("<Alt-x>", lambda e: new_patient())
+root.bind("<Alt-e>", lambda e: open_settings())
+root.bind("<Alt-d>", lambda e: open_dose_ranges_window())
 
 # Configure modern color scheme
 BG_COLOR = "#f0f2f5"
@@ -3686,6 +4981,25 @@ content_frame.pack(fill=tk.BOTH, expand=1)
 left_frame = ttk.Frame(content_frame)
 left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
 
+# Define mousewheel handlers before creating bindings
+def _on_mousewheel_left(event):
+    """Handle mouse wheel scroll on left canvas. Supports both MouseWheel and Button scroll events."""
+    if event.num == 4 or event.delta > 0:
+        left_canvas.yview_scroll(-1, "units")
+    elif event.num == 5 or event.delta < 0:
+        left_canvas.yview_scroll(1, "units")
+    else:
+        left_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+def _on_mousewheel_right(event):
+    """Handle mouse wheel scroll on right canvas. Supports both MouseWheel and Button scroll events."""
+    if event.num == 4 or event.delta > 0:
+        right_canvas.yview_scroll(-1, "units")
+    elif event.num == 5 or event.delta < 0:
+        right_canvas.yview_scroll(1, "units")
+    else:
+        right_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
 left_canvas = tk.Canvas(left_frame, bg=BG_COLOR, highlightthickness=0)
 left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
 
@@ -3708,12 +5022,17 @@ left_canvas.bind(
 )
 form_frame.bind('<Configure>', lambda e: left_canvas.configure(scrollregion=left_canvas.bbox("all")))
 
-# Mousewheel scrolling for left canvas
-left_canvas.bind("<Enter>", lambda e: left_canvas.bind_all("<MouseWheel>", _on_mousewheel_left))
-left_canvas.bind("<Leave>", lambda e: left_canvas.unbind_all("<MouseWheel>"))
-
-def _on_mousewheel_left(event):
-    left_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+# Mousewheel scrolling for left canvas - support both MouseWheel and alternative scroll events
+left_canvas.bind("<Enter>", lambda e: (
+    left_canvas.bind_all("<MouseWheel>", _on_mousewheel_left),
+    left_canvas.bind_all("<Button-4>", _on_mousewheel_left),
+    left_canvas.bind_all("<Button-5>", _on_mousewheel_left)
+))
+left_canvas.bind("<Leave>", lambda e: (
+    left_canvas.unbind_all("<MouseWheel>"),
+    left_canvas.unbind_all("<Button-4>"),
+    left_canvas.unbind_all("<Button-5>")
+))
 
 # --- RIGHT SIDE: Prescription Output (Scrollable) ---
 right_frame = ttk.Frame(content_frame)
@@ -3741,12 +5060,17 @@ right_canvas.bind(
 )
 output_frame.bind('<Configure>', lambda e: right_canvas.configure(scrollregion=right_canvas.bbox("all")))
 
-# Mousewheel scrolling for right canvas
-right_canvas.bind("<Enter>", lambda e: right_canvas.bind_all("<MouseWheel>", _on_mousewheel_right))
-right_canvas.bind("<Leave>", lambda e: right_canvas.unbind_all("<MouseWheel>"))
-
-def _on_mousewheel_right(event):
-    right_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+# Mousewheel scrolling for right canvas - support both MouseWheel and alternative scroll events
+right_canvas.bind("<Enter>", lambda e: (
+    right_canvas.bind_all("<MouseWheel>", _on_mousewheel_right),
+    right_canvas.bind_all("<Button-4>", _on_mousewheel_right),
+    right_canvas.bind_all("<Button-5>", _on_mousewheel_right)
+))
+right_canvas.bind("<Leave>", lambda e: (
+    right_canvas.unbind_all("<MouseWheel>"),
+    right_canvas.unbind_all("<Button-4>"),
+    right_canvas.unbind_all("<Button-5>")
+))
 
 # Configure form_frame columns
 form_frame.columnconfigure(0, weight=1)
@@ -3836,10 +5160,6 @@ allow_fourth_vial_var.trace_add("write", on_selection_changed)
 fourth_vial_check = ttk.Checkbutton(controls_frame, text="4th Vial?", variable=allow_fourth_vial_var)
 fourth_vial_check.pack(side=tk.LEFT, padx=(10, 5))
 
-preserve_manual_edits_var = tk.BooleanVar(value=False)
-preserve_edits_check = ttk.Checkbutton(controls_frame, text="🔒 Preserve Edits", variable=preserve_manual_edits_var)
-preserve_edits_check.pack(side=tk.LEFT, padx=(10, 5))
-
 # --- Prescriber / Prepared By / Load Patient ---
 prescriber_frame = ttk.Frame(form_frame)
 prescriber_frame.grid(row=9, column=0, padx=8, pady=6, sticky="ew")
@@ -3873,6 +5193,56 @@ mix_preparer_combo.pack(side=tk.LEFT, padx=5)
 load_patient_button = ttk.Button(prescriber_frame, text="📁 Load Patient", command=load_patient)
 load_patient_button.pack(side=tk.RIGHT, padx=5)
 
+# --- Helper function for allergen groups ---
+def create_allergen_group(parent_frame, allergens_list, allergen_vars_dict, on_change_callback):
+    """
+    Create allergen checkboxes with clickable labels and a "Check All" button.
+
+    Args:
+        parent_frame: The LabelFrame to add allergens to
+        allergens_list: List of allergen names
+        allergen_vars_dict: Dictionary to store BooleanVar objects
+        on_change_callback: Function to call when selection changes
+    """
+    # Add "Check All / Clear All" button at the top
+    button_frame = ttk.Frame(parent_frame)
+    button_frame.grid(row=0, column=0, columnspan=1, padx=6, pady=3, sticky="ew")
+
+    def check_all():
+        for var in [allergen_vars_dict[allergen] for allergen in allergens_list]:
+            var.set(True)
+
+    def clear_all():
+        for var in [allergen_vars_dict[allergen] for allergen in allergens_list]:
+            var.set(False)
+
+    ttk.Button(button_frame, text="✓ Check All", command=check_all, width=12).pack(side=tk.LEFT, padx=2)
+    ttk.Button(button_frame, text="✗ Clear All", command=clear_all, width=12).pack(side=tk.LEFT, padx=2)
+
+    # Create allergen checkboxes with clickable labels - single column layout
+    for i, allergen in enumerate(allergens_list):
+        var = tk.BooleanVar()
+        allergen_vars_dict[allergen] = var
+        var.trace_add("write", on_change_callback)
+
+        # Create a frame to hold checkbox and label together
+        check_frame = ttk.Frame(parent_frame)
+        check_frame.grid(row=i + 1, column=0, padx=6, pady=3, sticky="w")
+
+        # Create checkbox
+        checkbox = ttk.Checkbutton(check_frame, variable=var)
+        checkbox.pack(side=tk.LEFT)
+
+        # Create clickable label
+        label = tk.Label(check_frame, text=allergen, cursor="hand2", bg=BG_COLOR, fg=TEXT_COLOR)
+        label.pack(side=tk.LEFT, padx=(2, 0))
+
+        # Bind label click to toggle checkbox
+        def toggle_allergen(event, var=var):
+            var.set(not var.get())
+
+        label.bind("<Button-1>", toggle_allergen)
+
 # --- Environmental Allergen Checkboxes ---
 environmental_allergen_frames = []
 environmental_allergen_vars = {}
@@ -3881,64 +5251,39 @@ environmental_allergen_vars = {}
 mold_frame = ttk.LabelFrame(form_frame, text="🌱 Mold")
 mold_frame.grid(row=10, column=0, padx=8, pady=6, sticky="ew")
 environmental_allergen_frames.append(mold_frame)
-mold_allergens = ["Aspergillus", "Alternaria", "Cladosporium", "Penicillium"]
-for i, allergen in enumerate(mold_allergens):
-    var = tk.BooleanVar()
-    environmental_allergen_vars[allergen] = var
-    var.trace_add("write", on_selection_changed)
-    checkbox = ttk.Checkbutton(mold_frame, text=allergen, variable=var)
-    checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
+mold_allergens = ["Alternaria", "Aspergillus", "Cladosporium", "Penicillium"]
+create_allergen_group(mold_frame, mold_allergens, environmental_allergen_vars, on_selection_changed)
 
 # --- Tree Group ---
 tree_frame = ttk.LabelFrame(form_frame, text="🌳 Tree")
 tree_frame.grid(row=11, column=0, padx=8, pady=6, sticky="ew")
 environmental_allergen_frames.append(tree_frame)
-tree_allergens = ["Ash", "Birch (Oak)", "Cedar", "Elm", "Hackberry (Elm)", "Maple", "Sycamore", "Walnut (Pecan)",
+tree_allergens = ["Ash", "Cedar", "Hackberry (Elm)", "Maple", "Birch (Oak)", "Sycamore", "Walnut (Pecan)",
                   "Willow (Cottonwood)", "Mulberry"]
-for i, allergen in enumerate(tree_allergens):
-    var = tk.BooleanVar()
-    environmental_allergen_vars[allergen] = var
-    var.trace_add("write", on_selection_changed)
-    checkbox = ttk.Checkbutton(tree_frame, text=allergen, variable=var)
-    checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
+create_allergen_group(tree_frame, tree_allergens, environmental_allergen_vars, on_selection_changed)
 
 # --- Grass Group ---
 grass_frame = ttk.LabelFrame(form_frame, text="🌾 Grass")
 grass_frame.grid(row=12, column=0, padx=8, pady=6, sticky="ew")
 environmental_allergen_frames.append(grass_frame)
-grass_allergens = ["Timothy", "Johnson", "Bermuda"]
-for i, allergen in enumerate(grass_allergens):
-    var = tk.BooleanVar()
-    environmental_allergen_vars[allergen] = var
-    var.trace_add("write", on_selection_changed)
-    checkbox = ttk.Checkbutton(grass_frame, text=allergen, variable=var)
-    checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
+grass_allergens = ["Bermuda", "Johnson", "Timothy"]
+create_allergen_group(grass_frame, grass_allergens, environmental_allergen_vars, on_selection_changed)
 
 # --- Weed Group ---
 weed_frame = ttk.LabelFrame(form_frame, text="🌿 Weed")
 weed_frame.grid(row=13, column=0, padx=8, pady=6, sticky="ew")
 environmental_allergen_frames.append(weed_frame)
-weed_allergens = ["Cocklebur", "Yellow Dock (Sheep Sorrel)", "Kochia (Firebush)", "Lamb's Quarter", "Mugwort",
-                  "Pigweed", "English Plantain", "Russian Thistle", "Ragweed"]
-for i, allergen in enumerate(weed_allergens):
-    var = tk.BooleanVar()
-    environmental_allergen_vars[allergen] = var
-    var.trace_add("write", on_selection_changed)
-    checkbox = ttk.Checkbutton(weed_frame, text=allergen, variable=var)
-    checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
+weed_allergens = ["Cocklebur", "Yellow Dock (Sheep Sorrel)", "Kochia (Burning Bush)", "Lamb's Quarter", "Russian Thistle",
+                  "Mugwort", "Pigweed", "English Plantain", "Ragweed"]
+create_allergen_group(weed_frame, weed_allergens, environmental_allergen_vars, on_selection_changed)
 
 # --- Other Group ---
 other_frame = ttk.LabelFrame(form_frame, text="🐾 Other")
 other_frame.grid(row=14, column=0, padx=8, pady=6, sticky="ew")
 environmental_allergen_frames.append(other_frame)
-other_allergens = ["Cat", "Dog - UF", "Dog - Epithelium", "Mouse", "Rat", "Horse", "Amer. Cockroach", "Ger. Cockroach",
+other_allergens = ["Cat", "Dog - Epithelium", "Dog - UF", "Mouse", "Rat", "Horse", "Amer. Cockroach", "Ger. Cockroach",
                    "Dust Mite Mix"]
-for i, allergen in enumerate(other_allergens):
-    var = tk.BooleanVar()
-    environmental_allergen_vars[allergen] = var
-    var.trace_add("write", on_selection_changed)
-    checkbox = ttk.Checkbutton(other_frame, text=allergen, variable=var)
-    checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
+create_allergen_group(other_frame, other_allergens, environmental_allergen_vars, on_selection_changed)
 
 # Add trace callbacks for dog extract mutual exclusivity
 environmental_allergen_vars["Dog - UF"].trace_add("write", enforce_dog_mutual_exclusivity)
@@ -3951,14 +5296,48 @@ venom_allergen_frame.grid(row=15, column=0, columnspan=2, padx=8, pady=6, sticky
 venom_allergens = ["Honey Bee", "Yellow Jacket", "Yellow Faced Hornet", "White Faced Hornet", "Wasp"]
 venom_allergen_vars = {}
 venom_allergen_checkboxes = []
+venom_allergen_frames = []  # Store frames for proper grid management
 
+# Add "Check All / Clear All" button at the top
+venom_button_frame = ttk.Frame(venom_allergen_frame)
+venom_button_frame.grid(row=0, column=0, columnspan=2, padx=6, pady=3, sticky="ew")
+
+def check_all_venom():
+    for var in venom_allergen_vars.values():
+        var.set(True)
+
+def clear_all_venom():
+    for var in venom_allergen_vars.values():
+        var.set(False)
+
+ttk.Button(venom_button_frame, text="✓ Check All", command=check_all_venom, width=12).pack(side=tk.LEFT, padx=2)
+ttk.Button(venom_button_frame, text="✗ Clear All", command=clear_all_venom, width=12).pack(side=tk.LEFT, padx=2)
+
+# Create venom allergen checkboxes with clickable labels
 for i, allergen in enumerate(venom_allergens):
     var = tk.BooleanVar()
     venom_allergen_vars[allergen] = var
     var.trace_add("write", on_selection_changed)
-    checkbox = ttk.Checkbutton(venom_allergen_frame, text=allergen, variable=var)
-    checkbox.grid(row=i // 2, column=i % 2, padx=6, pady=3, sticky="w")
+
+    # Create a frame to hold checkbox and label together - single column layout
+    check_frame = ttk.Frame(venom_allergen_frame)
+    check_frame.grid(row=i + 1, column=0, padx=6, pady=3, sticky="w")
+
+    # Create checkbox
+    checkbox = ttk.Checkbutton(check_frame, variable=var)
+    checkbox.pack(side=tk.LEFT)
     venom_allergen_checkboxes.append(checkbox)
+    venom_allergen_frames.append(check_frame)  # Store frame for grid management
+
+    # Create clickable label
+    label = tk.Label(check_frame, text=allergen, cursor="hand2", bg=BG_COLOR, fg=TEXT_COLOR)
+    label.pack(side=tk.LEFT, padx=(2, 0))
+
+    # Bind label click to toggle checkbox
+    def toggle_allergen_venom(event, var=var):
+        var.set(not var.get())
+
+    label.bind("<Button-1>", toggle_allergen_venom)
 
 # Initially hide venom allergens
 for widget in venom_allergen_frame.winfo_children():
@@ -3995,6 +5374,56 @@ print_comp_log_button.pack(side=tk.LEFT, padx=3, ipadx=10, ipady=5)
 
 print_labels_button = ttk.Button(button_frame2, text="🏷 Print Labels", command=export_labels)
 print_labels_button.pack(side=tk.LEFT, padx=3, ipadx=10, ipady=5)
+
+# --- Expected Mix Date Selector ---
+mix_date_frame = ttk.Frame(form_frame)
+mix_date_frame.grid(row=18, column=0, padx=8, pady=8, sticky="ew")
+
+tk.Label(mix_date_frame, text="Expected Mix Date:", font=("Arial", 10), bg=SECTION_BG).pack(side=tk.LEFT, padx=5)
+
+global expected_mix_date_var
+expected_mix_date_var = tk.StringVar()
+
+class SmartDateEntry(DateEntry):
+    """DateEntry that positions calendar above the date entry box."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.bind("<Button-1>", self._on_click, add=True)
+
+    def _on_click(self, event):
+        """Store position info before calendar opens."""
+        self._widget_x = self.winfo_rootx()
+        self._widget_y = self.winfo_rooty()
+        self._widget_height = self.winfo_height()
+        # Let the normal click handler run
+        self.after(100, self._move_calendar_up)
+
+    def _move_calendar_up(self):
+        """Move the calendar popup above the widget."""
+        try:
+            # Find the calendar Toplevel window
+            for widget in root.winfo_children():
+                if isinstance(widget, tk.Toplevel):
+                    # This should be the calendar
+                    widget.update_idletasks()
+                    cal_height = widget.winfo_height()
+                    cal_width = widget.winfo_width()
+
+                    # Position above the entry box
+                    new_y = self._widget_y - cal_height - 5
+                    if new_y < 20:
+                        new_y = 20
+
+                    widget.geometry(f"+{self._widget_x}+{new_y}")
+                    break
+        except Exception as e:
+            print(f"DEBUG: Failed to reposition calendar: {e}")
+
+mix_date_picker = SmartDateEntry(mix_date_frame, textvariable=expected_mix_date_var, width=15,
+                            date_pattern='mm/dd/yyyy')
+mix_date_picker.pack(side=tk.LEFT, padx=5)
+expected_mix_date_var.set(datetime.date.today().strftime("%m/%d/%Y"))
 
 # --- Result Label with better styling ---
 result_frame = tk.Frame(output_frame, bg=SECTION_BG, relief=tk.SUNKEN, bd=1)
@@ -4038,7 +5467,8 @@ def refresh_expiring_extracts():
         expiring_tree.delete(row_id)
 
     try:
-        conn = sqlite3.connect(DB_FILE)
+        # Use longer timeout for database operations (20 seconds)
+        conn = sqlite3.connect(DB_FILE, timeout=20)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute('''
@@ -4069,15 +5499,53 @@ def refresh_expiring_extracts():
                 "Yes" if is_active else "No"
             ))
 
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e).lower():
+            # Database is locked, skip this refresh and try again soon
+            pass
+        else:
+            print(f"Warning: Failed to refresh expiring extracts list: {e}")
     except Exception as e:
         print(f"Warning: Failed to refresh expiring extracts list: {e}")
 
+    # Schedule next refresh - skip quickly if database is locked
     root.after(5000, refresh_expiring_extracts)
 
+# TODO: Temporarily disabled - causes database locking issues
 refresh_expiring_extracts()
 
 output_frame.columnconfigure(0, weight=1)
 output_frame.rowconfigure(0, weight=1)
 output_frame.rowconfigure(1, weight=0)
+
+# --- Status Bar ---
+status_frame = tk.Frame(root, bg="#e8eaed", height=30, relief=tk.SUNKEN, bd=1)
+status_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=0, pady=0)
+status_frame.pack_propagate(False)
+
+is_connected, status_msg = check_database_connection()
+status_color = "#27ae60" if is_connected else "#e74c3c"
+db_path_display = os.path.dirname(DB_FILE)
+if not db_path_display:
+    db_path_display = "Local"
+
+status_text = f"{status_msg} | Database: {db_path_display}"
+status_label = tk.Label(status_frame, text=status_text, bg="#e8eaed", fg=status_color, font=('Segoe UI', 9), justify=tk.LEFT)
+status_label.pack(side=tk.LEFT, padx=10, pady=5)
+
+def update_status():
+    is_connected, status_msg = check_database_connection()
+    status_color = "#27ae60" if is_connected else "#e74c3c"
+    status_text = f"{status_msg} | Database: {os.path.dirname(DB_FILE)}"
+    status_label.config(text=status_text, fg=status_color)
+    root.after(30000, update_status)
+
+root.after(30000, update_status)
+
+# Set up window close handler for database backup
+root.protocol("WM_DELETE_WINDOW", on_closing)
+
+# Cleanup old backups on startup
+cleanup_old_backups()
 
 root.mainloop()

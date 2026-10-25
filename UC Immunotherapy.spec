@@ -28,7 +28,7 @@ a = Analysis(
     ['ait gen.py'],
     pathex=[],
     binaries=[],
-    datas=tcl_data,
+    datas=tcl_data + [('UC_Allergy_AIT.db', '.')],
     hiddenimports=['tkinter', 'tkcalendar', 'reportlab'],
     hookspath=[],
     hooksconfig={},
